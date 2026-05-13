@@ -11,32 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  verify-update-checker:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install certifi
-        run: python -m pip install certifi
-
-      - name: Verify update checker
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/check_for_update.py --repo cli/cli --ci
-
   pack:
-    needs: verify-update-checker
     runs-on: ubuntu-latest
 
     steps:

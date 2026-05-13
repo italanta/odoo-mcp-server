@@ -10,7 +10,7 @@ Claude (client) ←→ [stdio] ←→ Odoo MCP Server (this repo) ←→ Odoo AP
 
 ## Credential Model: Per-User, Local
 
-Each Claude user has their own credentials file at `~/.config/my-odoo/credentials.json` (Unix/macOS) or similar on Windows. This file is:
+Each Claude user has their own credentials file at `~/.config/odoo-mcp/credentials.json` (Unix/macOS) or similar on Windows. This file is:
 
 - Created by the user running `odoo_setup_credentials` tool (in Claude)
 - Stored with mode `600` (owner-only read/write)
@@ -89,7 +89,7 @@ async def _execute(self, model: str, method: str, *args, **kwargs):
 
 ### 4. Multi-Company Support
 
-Most tools accept an optional `company_id` parameter to filter by Odoo company. This supports multi-company Odoo instances (Elewa has three companies).
+Most tools accept an optional `company_id` parameter to filter by Odoo company. This supports multi-company Odoo instances.
 
 ### 5. Domain Tool Modules
 

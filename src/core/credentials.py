@@ -1,7 +1,7 @@
 """
 Credential management — config file per user.
 
-Credentials are stored in ~/.config/my-odoo/credentials.json (mode 600).
+Credentials are stored in ~/.config/odoo-mcp/credentials.json (mode 600).
 
 Written by the 'odoo_setup_credentials' MCP tool — users set up credentials
 directly from a Claude conversation without needing shell access.
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Config file path — per user, in their home directory
-CONFIG_PATH = Path.home() / ".config" / "my-odoo" / "credentials.json"
+CONFIG_PATH = Path.home() / ".config" / "odoo-mcp" / "credentials.json"
 
 
 def setup_advice() -> str:
@@ -39,9 +39,9 @@ def setup_advice() -> str:
 class OdooCredentials:
     """Immutable credential container. Never serialized, never logged."""
 
-    url: str       # e.g. https://elewa.odoo.com
-    db: str        # e.g. elewa-main-16488...
-    username: str  # e.g. jente@elewa.ke
+    url: str       # e.g. https://my.odoo.com
+    db: str        # e.g. mydb
+    username: str  # e.g. jente@mydb.com
     api_key: str   # Odoo API key (Settings > API Keys)
 
     def __repr__(self) -> str:
@@ -50,7 +50,7 @@ class OdooCredentials:
 
 
 def get_odoo_credentials() -> OdooCredentials:
-    """Read credentials from ~/.config/my-odoo/credentials.json.
+    """Read credentials from ~/.config/odoo-mcp/credentials.json.
 
     Raises:
         RuntimeError: File missing or incomplete — user needs to run odoo_setup_credentials.
@@ -82,7 +82,7 @@ def get_odoo_credentials() -> OdooCredentials:
 
 
 def store_odoo_credentials_file(url: str, db: str, username: str, api_key: str) -> None:
-    """Write credentials to ~/.config/my-odoo/credentials.json (mode 600).
+    """Write credentials to ~/.config/odoo-mcp/credentials.json (mode 600).
 
     Called by the odoo_setup_credentials MCP tool.
     """

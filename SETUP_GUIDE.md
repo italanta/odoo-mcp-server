@@ -10,7 +10,6 @@ git init
 git add .
 git commit -m "Initial commit: Standalone Odoo MCP server
 
-- Extracted from elewa-mcp-skills monorepo
 - Includes sales, projects domain tools
 - Safety guard for outbound communication blocker
 - Full test suite with safety validation"
@@ -76,22 +75,6 @@ Then users can install with:
 pip install odoo-mcp-server
 ```
 
-## Step 6: Update Original Monorepo
-
-Optionally, update the original `claude-skills-elewa` repo to point to this separate server:
-
-In `claude-skills-elewa/pyproject.toml`:
-
-```toml
-dependencies = [
-    "odoo-mcp-server @ git+https://github.com/italanta/odoo-mcp-server",
-    # ... other deps
-]
-```
-
-Or in `claude-skills-elewa/README.md`:
-
-```markdown
 ## Odoo MCP Server
 
 The core Odoo MCP server is now a standalone package:
@@ -142,7 +125,7 @@ odoo-mcp-server/
 Always run safety tests before any commit or release:
 
 ```bash
-cd /Users/jenterosseel/Documents/GitHub/odoo-mcp-server
+cd /Users/my-user/Documents/GitHub/odoo-mcp-server
 
 # Install dev dependencies
 pip install -e ".[dev]"
@@ -152,15 +135,7 @@ pytest src/mcp/odoo/tests/test_safety.py -v
 
 # Run all tests
 pytest tests/ src/mcp/odoo/tests/ -v
-```
-
-## Next Steps
-
-1. ✅ Create GitHub repo and push
-2. ⬜ (Optional) Set up CI/CD GitHub Actions for automated testing
-3. ⬜ (Optional) Create GitHub Release with version tag (v0.1.0, etc.)
-4. ⬜ (Optional) Publish to PyPI when ready for public release
-5. ⬜ Add collaborators/team members who need write access
+``` 
 
 ## Common Commands
 

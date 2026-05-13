@@ -72,7 +72,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         await client.authenticate()
     except (RuntimeError, Exception) as exc:
         auth_error = (
-            f"Elewa Odoo is not authenticated: {exc}  "
+            f"Odoo is not authenticated: {exc}  "
             + setup_advice()
         )
         client = None
@@ -83,7 +83,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 
 mcp = FastMCP(
-    "elewa_odoo_mcp",
+    "odoo_mcp",
     lifespan=app_lifespan,
 )
 
@@ -426,7 +426,7 @@ class OdooSetupCredentialsInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    url: str = Field(..., description="Odoo URL, e.g. https://elewa.odoo.com")
+    url: str = Field(..., description="Odoo URL, e.g. https://my.odoo.com")
     db: str = Field(..., description="Odoo database name")
     username: str = Field(..., description="Your Odoo login email")
     api_key: str = Field(..., description="Your Odoo API key (Settings > Users > API Keys tab)")
@@ -435,15 +435,15 @@ class OdooSetupCredentialsInput(BaseModel):
 @mcp.tool(
     name="odoo_setup_credentials",
     description=(
-        "Save your personal Odoo credentials so Elewa Odoo tools can connect on your behalf. "
-        "Run this once. Credentials are stored in your user home directory (~/.config/my-odoo/) "
+        "Save your personal Odoo credentials so Odoo tools can connect on your behalf. "
+        "Run this once. Credentials are stored in your user home directory (~/.config/odoo-mcp/) "
         "and are only accessible to you. To generate an API key: go to Odoo Settings > "
         "Users > your profile > API Keys tab > New API Key."
     ),
     annotations={"title": "Set Up Odoo Credentials", "readOnlyHint": False, "destructiveHint": False},
 )
 async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
-    """Tool: write per-user Odoo credentials to ~/.config/my-odoo/credentials.json.
+    """Tool: write per-user Odoo credentials to ~/.config/odoo-mcp/credentials.json.
 
     Validates the credentials against Odoo before storing them.
     Does not require an existing authenticated session.
@@ -452,7 +452,7 @@ async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
 
     # Basic input validation
     if not re.match(r"^https?://", input.url):
-        return "Error: URL must start with https:// (e.g. https://elewa.odoo.com)"
+        return "Error: URL must start with https:// (e.g. https://my.odoo.com)"
     if "@" not in input.username:
         return "Error: username must be an email address"
     if not input.db.strip():

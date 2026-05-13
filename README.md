@@ -12,6 +12,13 @@ This MCP server exposes Odoo as a set of modular, domain-specific tools that Cla
 
 All write operations are **safety-checked** to prevent accidental outbound communication (emails, SMS, calendar invites). Internal-only notes, activities, and field updates are safe by design.
 
+## Disclaimer
+
+- This project is an independent, community-maintained MCP server and is **not affiliated with, endorsed by, or sponsored by Odoo S.A.**
+- **Odoo** is a trademark of Odoo S.A. Any product names, logos, and brands are used for identification only.
+- You are responsible for validating security, compliance, and access controls before using this server in production environments.
+- Always test write-enabled workflows in a non-production environment first.
+
 ## Key Features
 
 - ✅ **Safety-first**: Outbound communication blocker prevents emails, SMS, and invites
@@ -61,12 +68,12 @@ In Claude, ask:
 > Set up my Odoo credentials
 
 Claude will prompt you for:
-- **Odoo URL** (e.g., `https://elewa.odoo.com`)
+- **Odoo URL** (e.g., `https://my.odoo.com`)
 - **Database name** (e.g., `elewa-prod-12345`)
 - **Email** (your Odoo login)
 - **API Key** (from Settings > Users > your profile > API Keys)
 
-Credentials are stored in `~/.config/my-odoo/credentials.json` with mode `600` (owner-only read/write).
+Credentials are stored in `~/.config/odoo-mcp/credentials.json` with mode `600` (owner-only read/write).
 
 ## Tools
 
@@ -126,36 +133,36 @@ The **SafetyGuard** in `src/mcp/odoo/utils/safety.py` blocks:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Claude MCP Client                           │
-│                    (Claude Desktop or Terminal)                     │
+│                         MCP Client                                  │
+│            (ClawdBot, Claude Desktop or Terminal)                   │
 └────────────────────────────┬────────────────────────────────────────┘
                              │ stdio
                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       Odoo MCP Server                               │
-│  (FastMCP + Domain Tool Modules + SafetyGuard)                      │
-│                                                                     │
+┌────────────────────────────────────────────────────────────────────┐
+│                       Odoo MCP Server                              │
+│  (FastMCP + Domain Tool Modules + SafetyGuard)                     │
+│                                                                    │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │ Generic Tools (search, read, write, create, log_note, etc.)  │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ Domain Tool Modules                                           │  │
+│  │ Domain Tool Modules                                          │  │
 │  │  • sales.py (8 CRM tools)                                    │  │
 │  │  • projects.py (6 project tools)                             │  │
 │  │  • (others: support, finance, erp, knowledge — future)       │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ OdooClient + SafetyGuard                                      │  │
+│  │ OdooClient + SafetyGuard                                     │  │
 │  │  • Async XML-RPC calls                                       │  │
-│  │  • Credential management (~/.config/my-odoo/...)          │  │
+│  │  • Credential management (~/.config/odoo-mcp/...)            │  │
 │  │  • Safety validation before all writes                       │  │
 │  └──────────────────────────────────────────────────────────────┘  │
-└────────────────────────────┬────────────────────────────────────────┘
+└────────────────────────────┬───────────────────────────────────────┘
                              │ XML-RPC
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          Odoo Instance                              │
-│           (https://elewa.odoo.com or your custom URL)              │
+│           (https://my.odoo.com or your custom URL)                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -255,7 +262,7 @@ All writes go through `SafetyGuard.validate_write()`. **Never bypass this** — 
 Claude should prompt: Tell Claude: 'Set up my Odoo credentials'
 ```
 
-Credentials are stored in `~/.config/my-odoo/credentials.json`. If this file is missing or incomplete, run credential setup again.
+Credentials are stored in `~/.config/odoo-mcp/credentials.json`. If this file is missing or incomplete, run credential setup again.
 
 ### "Odoo authentication failed"
 
@@ -280,7 +287,7 @@ Contributions welcome! Please:
 
 ## License
 
-Proprietary. Used by Elewa and authorized partners.
+MIT Open Source
 
 ## Support
 

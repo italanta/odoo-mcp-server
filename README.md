@@ -162,7 +162,7 @@ After successful self-update, restart the MCP host/client so the new package is 
 
 ## Safety Guarantees
 
-The **SafetyGuard** in `src/mcp/odoo/utils/safety.py` blocks:
+The **SafetyGuard** in `src/mcp/odoo/utils/safety.py` enforces blocklists defined in `src/mcp/odoo/utils/safety_blocked_methods.py`:
 
 - ❌ All email/SMS sending models: `mail.mail`, `sms.sms`, mailing lists
 - ❌ Direct email methods: `action_send_mail`, `action_quotation_send`, `send_mail`, etc.

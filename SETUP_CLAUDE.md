@@ -1,16 +1,45 @@
-# Claude Desktop Setup (Fastest Path)
+# Claude Desktop Setup (macOS and Windows)
 
-This is the quickest way to run this Odoo MCP server in Claude Desktop on macOS.
+This guide is split into two complete tracks so you can follow only your platform.
 
-## 1) Add MCP Server to Claude Desktop
+## Do I Need Python?
 
-Open this file:
+Short answer: not always on your own laptop, but yes somewhere.
+
+- Claude Desktop on your Mac/PC: Yes. The MCP server runs locally, so a local runtime is required (Python directly, or `uv`/`uvx` which manages it for you).
+- Claude Cowork managed environment: Usually not on your personal machine. But the environment running the MCP server still needs Python available.
+
+Claude Cowork does not remove the Python requirement entirely. It shifts where Python must exist.
+
+## macOS Track
+
+### 1) Install Python (3.11+)
+
+Option A (official installer):
+- Download from: `https://www.python.org/downloads/macos/`
+- Run the installer, then restart Terminal.
+
+Option B (Homebrew):
+
+```bash
+brew install python
+```
+
+Verify:
+
+```bash
+python3 --version
+```
+
+### 2) Add MCP Server to Claude Desktop
+
+Open:
 
 `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 If it does not exist, create it.
 
-Use this config:
+Use:
 
 ```json
 {
@@ -27,16 +56,11 @@ Use this config:
 }
 ```
 
-Why this is easiest:
-- No manual clone required
-- No virtual environment required
-- Always launches from the published GitHub source
+### 3) Restart Claude Desktop
 
-## 2) Restart Claude Desktop
+Completely quit and reopen Claude Desktop.
 
-Completely quit and reopen Claude Desktop after saving the config.
-
-## 3) Set Credentials in Claude
+### 4) Set Credentials in Claude
 
 In Claude chat, say:
 
@@ -50,16 +74,82 @@ Provide:
 
 Credentials are saved per user at:
 
-`~/.config/odoo-mcp/credentials.json`
+`~/.config/my-odoo/credentials.json`
 
-## 4) Verify It Works
+### 5) Verify
 
 Ask Claude:
-
 - `Ping Odoo`
 - `Show my Odoo runtime info`
 
-If setup is correct, Claude should call tools such as `odoo_ping` and return your user profile.
+## Windows (Microsoft) Track
+
+### 1) Install Python (3.11+)
+
+Option A (official installer):
+- Download from: `https://www.python.org/downloads/windows/`
+- Run installer and enable `Add Python to PATH`.
+
+Option B (winget):
+
+```powershell
+winget install -e --id Python.Python.3.12
+```
+
+Verify (PowerShell):
+
+```powershell
+python --version
+```
+
+### 2) Add MCP Server to Claude Desktop
+
+Open:
+
+`%AppData%\Claude\claude_desktop_config.json`
+
+If it does not exist, create it.
+
+Use:
+
+```json
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "https://github.com/italanta/odoo-mcp-server",
+        "odoo-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+### 3) Restart Claude Desktop
+
+Completely quit and reopen Claude Desktop.
+
+### 4) Set Credentials in Claude
+
+In Claude chat, say:
+
+`Set up my Odoo credentials`
+
+Provide:
+- Odoo URL
+- Database name
+- Odoo login email
+- Odoo API key
+
+Credentials are saved in the user profile used by the MCP process.
+
+### 5) Verify
+
+Ask Claude:
+- `Ping Odoo`
+- `Show my Odoo runtime info`
 
 ## Troubleshooting
 

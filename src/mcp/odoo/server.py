@@ -278,7 +278,7 @@ async def odoo_read_records(input: OdooGetRecordInput, ctx: Context) -> list[dic
 
 @mcp.tool(
     name="odoo_log_internal_note",
-    description="Post an internal chatter note using message_type='note' (never outbound email).",
+    description="Post an internal chatter note directly (never outbound email).",
     annotations={"title": "Log Internal Note", "readOnlyHint": False, "destructiveHint": False},
 )
 async def odoo_log_internal_note(input: OdooLogNoteInput, ctx: Context) -> dict[str, Any] | str:
@@ -289,6 +289,7 @@ async def odoo_log_internal_note(input: OdooLogNoteInput, ctx: Context) -> dict[
     message_id = await odoo.log_note(model=input.model, record_id=input.record_id, body=input.body)
     return {
         "ok": True,
+        "tool": "odoo_log_internal_note",
         "message_id": message_id,
         "model": input.model,
         "record_id": input.record_id,
@@ -297,28 +298,51 @@ async def odoo_log_internal_note(input: OdooLogNoteInput, ctx: Context) -> dict[
 
 @mcp.tool(
     name="odoo_schedule_activity",
-    description="Create an internal Odoo activity/reminder (SafetyGuard enforced).",
+    description="Build an internal activity proposal payload for staged approval. Does not execute directly.",
     annotations={"title": "Schedule Activity", "readOnlyHint": False, "destructiveHint": False},
 )
 async def odoo_schedule_activity(input: OdooScheduleActivityInput, ctx: Context) -> dict[str, Any] | str:
-    """Tool: schedule an internal follow-up activity on an Odoo record."""
+    """Tool: build an internal activity create payload for staged approval flow."""
     odoo = _odoo(ctx)
     if isinstance(odoo, str):
         return odoo
-    activity_id = await odoo.schedule_activity(
-        model=input.model,
-        record_id=input.record_id,
-        summary=input.summary,
-        date_deadline=input.date_deadline,
-        activity_type_id=input.activity_type_id,
-        user_id=input.user_id,
-        note=input.note,
-    )
+
+    # Resolve model id now so the staged payload can be executed as plain create.
+    model_ref = await odoo.search_read("ir.model", [("model", "=", input.model)], ["id"], limit=1)
+    if not model_ref:
+        return {
+            "ok": False,
+            "tool": "odoo_schedule_activity",
+            "error": f"Model '{input.model}' not found in ir.model.",
+        }
+
+    values: dict[str, Any] = {
+        "res_model_id": model_ref[0]["id"],
+        "res_id": input.record_id,
+        "summary": input.summary,
+        "date_deadline": input.date_deadline,
+        "activity_type_id": input.activity_type_id,
+        "note": input.note,
+    }
+    if input.user_id:
+        values["user_id"] = input.user_id
+
+    payload = {
+        "model": "mail.activity",
+        "operation": "create",
+        "record_ids": [],
+        "values": values,
+    }
     return {
         "ok": True,
-        "activity_id": activity_id,
-        "model": input.model,
-        "record_id": input.record_id,
+        "tool": "odoo_schedule_activity",
+        "mode": "proposal_only",
+        "payload": payload,
+        "next": [
+            "Run odoo_preview_write with this payload.",
+            "Run odoo_validate_write with the same payload.",
+            "After explicit user approval, run odoo_execute_approved_write.",
+        ],
     }
 
 
@@ -366,9 +390,12 @@ class OdooPreviewWriteInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: str = Field(..., description="Odoo model name")
-    operation: str = Field(..., description="One of: create, write")
+    operation: str = Field(..., description="One of: create, write, call")
     record_ids: list[int] = Field(default_factory=list, description="Required for write")
     values: dict[str, Any] = Field(default_factory=dict, description="Field payload for create/write")
+    method: str | None = Field(default=None, description="Required for call operation, e.g. message_post")
+    args: list[Any] = Field(default_factory=list, description="Positional args for call operation")
+    kwargs: dict[str, Any] = Field(default_factory=dict, description="Keyword args for call operation")
 
 
 class OdooValidateWriteInput(BaseModel):
@@ -377,9 +404,12 @@ class OdooValidateWriteInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: str = Field(..., description="Odoo model name")
-    operation: str = Field(..., description="One of: create, write")
+    operation: str = Field(..., description="One of: create, write, call")
     record_ids: list[int] = Field(default_factory=list, description="Required for write")
     values: dict[str, Any] = Field(default_factory=dict, description="Field payload for create/write")
+    method: str | None = Field(default=None, description="Required for call operation, e.g. message_post")
+    args: list[Any] = Field(default_factory=list, description="Positional args for call operation")
+    kwargs: dict[str, Any] = Field(default_factory=dict, description="Keyword args for call operation")
 
 
 class OdooExecuteApprovedWriteInput(BaseModel):
@@ -435,18 +465,32 @@ async def odoo_diagnose_call(input: OdooDiagnoseCallInput) -> dict[str, Any]:
 
 @mcp.tool(
     name="odoo_preview_write",
-    description="Dry-run step 1: create a canonical write draft (model/operation/ids/values) for human review; does not validate against live metadata and does not execute any Odoo call.",
+    description="Dry-run step 1: create a canonical mutation draft (create/write/call) for human review; does not validate against live metadata and does not execute any Odoo call.",
     annotations={"title": "Preview Write", "readOnlyHint": True, "destructiveHint": False},
 )
 async def odoo_preview_write(input: OdooPreviewWriteInput) -> dict[str, Any]:
     """Tool: generate a non-executing write draft for staged approval flow."""
     # Step 1: normalize and return a canonical payload draft for human/agent review.
     operation = input.operation.strip().lower()
-    if operation not in {"create", "write"}:
+    if operation not in {"create", "write", "call"}:
         return {
             "success": False,
             "tool": "odoo_preview_write",
-            "error": "Unsupported operation. Use 'create' or 'write'.",
+            "error": "Unsupported operation. Use 'create', 'write', or 'call'.",
+        }
+
+    if operation == "write" and not input.record_ids:
+        return {
+            "success": False,
+            "tool": "odoo_preview_write",
+            "error": "record_ids are required for write operations.",
+        }
+
+    if operation == "call" and not (input.method and input.method.strip()):
+        return {
+            "success": False,
+            "tool": "odoo_preview_write",
+            "error": "method is required for call operations.",
         }
 
     payload = {
@@ -454,6 +498,9 @@ async def odoo_preview_write(input: OdooPreviewWriteInput) -> dict[str, Any]:
         "operation": operation,
         "record_ids": input.record_ids,
         "values": input.values,
+        "method": input.method,
+        "args": input.args,
+        "kwargs": input.kwargs,
     }
     return {
         "success": True,
@@ -465,18 +512,18 @@ async def odoo_preview_write(input: OdooPreviewWriteInput) -> dict[str, Any]:
 
 @mcp.tool(
     name="odoo_validate_write",
-    description="Dry-run step 2: validate a write draft with SafetyGuard and live fields_get metadata, then issue a short-lived single-use approval token for explicit user approval in conversation; does not execute writes.",
+    description="Dry-run step 2: validate a mutation draft with SafetyGuard and live metadata checks where applicable, then issue a short-lived single-use approval token for explicit user approval in conversation; does not execute writes.",
     annotations={"title": "Validate Write", "readOnlyHint": True, "destructiveHint": False},
 )
 async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> dict[str, Any] | str:
     """Tool: validate staged write payload and issue an approval token without execution."""
     # Step 2: syntactic operation validation.
     operation = input.operation.strip().lower()
-    if operation not in {"create", "write"}:
+    if operation not in {"create", "write", "call"}:
         return {
             "success": False,
             "tool": "odoo_validate_write",
-            "error": "Unsupported operation. Use 'create' or 'write'.",
+            "error": "Unsupported operation. Use 'create', 'write', or 'call'.",
         }
 
     if operation == "write" and not input.record_ids:
@@ -486,10 +533,21 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
             "error": "record_ids are required for write operations.",
         }
 
+    if operation == "call" and not (input.method and input.method.strip()):
+        return {
+            "success": False,
+            "tool": "odoo_validate_write",
+            "error": "method is required for call operations.",
+        }
+
     # Apply outbound communication safety policy before any metadata checks.
     guard = SafetyGuard()
     try:
-        guard.validate_write(input.model, operation, input.values)
+        guard.validate_write(
+            input.model,
+            input.method.strip() if operation == "call" and input.method else operation,
+            input.kwargs if operation == "call" else input.values,
+        )
     except SafetyViolation as exc:
         return {
             "success": False,
@@ -502,24 +560,30 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
     if isinstance(odoo, str):
         return odoo
 
-    # Live metadata is required so approval is based on current Odoo schema, not assumptions.
-    field_meta = await odoo.fields_get(model=input.model, attributes=["string", "type", "required", "readonly"])
-    if not field_meta:
-        return {
-            "success": False,
-            "tool": "odoo_validate_write",
-            "error": "fields_get returned empty metadata; refusing approval.",
-            "metadata_used": {"live_odoo": False},
-        }
+    metadata_used: dict[str, Any] = {"live_odoo": False}
+    if operation in {"create", "write"}:
+        # Live metadata is required so approval is based on current Odoo schema, not assumptions.
+        field_meta = await odoo.fields_get(model=input.model, attributes=["string", "type", "required", "readonly"])
+        if not field_meta:
+            return {
+                "success": False,
+                "tool": "odoo_validate_write",
+                "error": "fields_get returned empty metadata; refusing approval.",
+                "metadata_used": {"live_odoo": False},
+            }
 
-    # Unknown fields are rejected to prevent drift and typo-based writes.
-    unknown_fields = sorted(set(input.values.keys()) - set(field_meta.keys()))
-    if unknown_fields:
-        return {
-            "success": False,
-            "tool": "odoo_validate_write",
-            "error": f"Unknown fields for model {input.model}: {', '.join(unknown_fields)}",
-            "metadata_used": {"live_odoo": True},
+        # Unknown fields are rejected to prevent drift and typo-based writes.
+        unknown_fields = sorted(set(input.values.keys()) - set(field_meta.keys()))
+        if unknown_fields:
+            return {
+                "success": False,
+                "tool": "odoo_validate_write",
+                "error": f"Unknown fields for model {input.model}: {', '.join(unknown_fields)}",
+                "metadata_used": {"live_odoo": True},
+            }
+        metadata_used = {
+            "live_odoo": True,
+            "field_count": len(field_meta),
         }
 
     payload = {
@@ -527,6 +591,9 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
         "operation": operation,
         "record_ids": input.record_ids,
         "values": input.values,
+        "method": input.method,
+        "args": input.args,
+        "kwargs": input.kwargs,
     }
     # Register short-lived single-use approval token bound to exact validated payload.
     approval = _approval_store.register(payload)
@@ -539,17 +606,14 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
             "expires_at": approval.expires_at,
             "requires_confirm": True,
         },
-        "metadata_used": {
-            "live_odoo": True,
-            "field_count": len(field_meta),
-        },
+        "metadata_used": metadata_used,
         "next": "Run odoo_execute_approved_write with approval_token and confirm=true.",
     }
 
 
 @mcp.tool(
     name="odoo_execute_approved_write",
-    description="Step 3 (execution): perform create/write only after explicit user approval and only when confirm=true, token is valid and unused, and ODOO_MCP_ENABLE_WRITES=1; otherwise fail closed.",
+    description="Step 3 (execution): perform approved create/write/call only after explicit user approval and only when confirm=true, token is valid and unused, and ODOO_MCP_ENABLE_WRITES=1; otherwise fail closed.",
     annotations={"title": "Execute Approved Write", "readOnlyHint": False, "destructiveHint": True},
 )
 async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx: Context) -> dict[str, Any] | str:
@@ -617,6 +681,22 @@ async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx:
             "model": payload["model"],
             "record_ids": payload["record_ids"],
             "ok": ok,
+        }
+
+    if operation == "call":
+        result = await odoo._execute(
+            payload["model"],
+            payload.get("method", ""),
+            *(payload.get("args") or []),
+            **(payload.get("kwargs") or {}),
+        )
+        return {
+            "success": True,
+            "tool": "odoo_execute_approved_write",
+            "operation": operation,
+            "model": payload["model"],
+            "method": payload.get("method"),
+            "result": result,
         }
 
     return {

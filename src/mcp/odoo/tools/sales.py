@@ -345,11 +345,9 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
     async def propose_stage_change(params: ProposeStageChangeInput, ctx: Context) -> str:
         """Propose moving a CRM opportunity to a different pipeline stage.
 
-        IMPORTANT: This executes the stage change. It should only be called after
-        the human has reviewed and approved the proposal.
-
-        The stage change is safe — it updates a field and logs an internal note.
-        No emails are sent.
+        This tool no longer executes writes directly.
+        It returns a staged payload that must go through
+        odoo_preview_write -> odoo_validate_write -> odoo_execute_approved_write.
         """
         odoo = get_odoo(ctx)
         if isinstance(odoo, str):
@@ -367,16 +365,17 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
 
         target_stage = stages[0]
 
-        await odoo.write("crm.lead", [params.opportunity_id], {"stage_id": target_stage["id"]})
-
-        note_body = (
-            f"<p><strong>AI-proposed stage change</strong></p>"
-            f"<p>Moved to <strong>{html.escape(target_stage['name'])}</strong></p>"
-            f"<p><em>Reason:</em> {html.escape(params.reason)}</p>"
+        payload = {
+            "model": "crm.lead",
+            "operation": "write",
+            "record_ids": [params.opportunity_id],
+            "values": {"stage_id": target_stage["id"]},
+        }
+        return (
+            f"Staged proposal ready: move opportunity {params.opportunity_id} to stage '{target_stage['name']}'. "
+            f"Reason: {params.reason}. Payload: {json.dumps(payload)}. "
+            "Next: run odoo_preview_write, then odoo_validate_write, then after explicit user approval run odoo_execute_approved_write."
         )
-        await odoo.log_note("crm.lead", params.opportunity_id, note_body)
-
-        return f"Stage changed to '{target_stage['name']}' for opportunity {params.opportunity_id}. Internal note logged with reason."
 
     @mcp.tool(
         name="odoo_propose_log_note",
@@ -391,11 +390,8 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
     async def propose_log_note(params: ProposeLogNoteInput, ctx: Context) -> str:
         """Add an internal log note to a CRM opportunity.
 
-        SAFE: Log notes (message_type='note') are purely internal.
-        They appear in the chatter but NEVER send emails to anyone.
-
-        Use this for recording email scan findings, meeting debriefs,
-        deal analysis, and any AI-generated context.
+        SAFE: Log notes are internal-only and do not trigger outbound messages.
+        Notes are the only direct mutation path.
         """
         odoo = get_odoo(ctx)
         if isinstance(odoo, str):
@@ -417,28 +413,37 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
     async def propose_activity(params: ProposeActivityInput, ctx: Context) -> str:
         """Schedule a follow-up activity (to-do, call, or meeting reminder) on an opportunity.
 
-        SAFE: Activities are internal reminders that appear in the user's Odoo
-        activity feed. They do NOT send emails or calendar invitations.
-
-        Note: 'meeting' here means an internal reminder to schedule a meeting,
-        NOT a calendar event with attendees. Calendar invites require separate
-        express approval.
+        This tool no longer executes writes directly.
+        It returns a staged payload that must go through
+        odoo_preview_write -> odoo_validate_write -> odoo_execute_approved_write.
         """
         odoo = get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         type_map = {"todo": 4, "call": 2, "meeting": 3}
         activity_type_id = type_map.get(params.activity_type, 4)
+        model_ref = await odoo.search_read("ir.model", [("model", "=", "crm.lead")], ["id"], limit=1)
+        if not model_ref:
+            return "Error: Model 'crm.lead' not found in ir.model."
 
-        act_id = await odoo.schedule_activity(
-            "crm.lead",
-            params.opportunity_id,
-            summary=params.summary,
-            date_deadline=params.date_deadline,
-            activity_type_id=activity_type_id,
-            note=params.note,
+        payload = {
+            "model": "mail.activity",
+            "operation": "create",
+            "record_ids": [],
+            "values": {
+                "res_model_id": model_ref[0]["id"],
+                "res_id": params.opportunity_id,
+                "summary": params.summary,
+                "date_deadline": params.date_deadline,
+                "activity_type_id": activity_type_id,
+                "note": params.note,
+            },
+        }
+        return (
+            f"Staged proposal ready: schedule activity '{params.summary}' for opportunity {params.opportunity_id}. "
+            f"Payload: {json.dumps(payload)}. "
+            "Next: run odoo_preview_write, then odoo_validate_write, then after explicit user approval run odoo_execute_approved_write."
         )
-        return f"Activity '{params.summary}' scheduled for {params.date_deadline} on opportunity {params.opportunity_id} (activity ID: {act_id})."
 
     @mcp.tool(
         name="odoo_propose_field_update",
@@ -456,26 +461,24 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Only safe fields are allowed — see SAFE_OPPORTUNITY_FIELDS.
         Stage changes go through odoo_propose_stage_change instead.
 
-        IMPORTANT: This executes the update. Call only after human approval.
+        This tool no longer executes writes directly.
+        It returns a staged payload that must go through
+        odoo_preview_write -> odoo_validate_write -> odoo_execute_approved_write.
         """
-        odoo = get_odoo(ctx)
-        if isinstance(odoo, str):
-            return odoo
         unsafe = set(params.updates.keys()) - SAFE_OPPORTUNITY_FIELDS
         if unsafe:
             return f"Error: Cannot update these fields via AI: {', '.join(unsafe)}. Safe fields: {', '.join(sorted(SAFE_OPPORTUNITY_FIELDS))}"
-
-        await odoo.write("crm.lead", [params.opportunity_id], params.updates)
-
-        changes = ", ".join(f"{k}={v}" for k, v in params.updates.items())
-        note_body = (
-            f"<p><strong>AI-proposed field update</strong></p>"
-            f"<p>Updated: {html.escape(changes)}</p>"
-            f"<p><em>Reason:</em> {html.escape(params.reason)}</p>"
+        payload = {
+            "model": "crm.lead",
+            "operation": "write",
+            "record_ids": [params.opportunity_id],
+            "values": params.updates,
+        }
+        return (
+            f"Staged proposal ready: update opportunity {params.opportunity_id}. "
+            f"Reason: {params.reason}. Payload: {json.dumps(payload)}. "
+            "Next: run odoo_preview_write, then odoo_validate_write, then after explicit user approval run odoo_execute_approved_write."
         )
-        await odoo.log_note("crm.lead", params.opportunity_id, note_body)
-
-        return f"Updated {len(params.updates)} field(s) on opportunity {params.opportunity_id}: {changes}. Internal note logged."
 
     @mcp.tool(
         name="odoo_search_contacts",

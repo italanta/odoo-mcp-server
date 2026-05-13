@@ -82,27 +82,28 @@ Credentials are stored in `~/.config/odoo-mcp/credentials.json` with mode `600` 
 - `odoo_ping` — Validate connectivity and show your profile
 - `odoo_search_read` — Find records with flexible filters
 - `odoo_read_records` — Read specific records by ID
-- `odoo_log_internal_note` — Add internal chatter notes (never sends emails)
-- `odoo_schedule_activity` — Create reminders/to-dos
+- `odoo_log_internal_note` — Add internal chatter notes directly (safe)
+- `odoo_schedule_activity` — Build staged payload for an internal reminder activity
 - `odoo_fields_get` — Introspect model field definitions
 - `odoo_search_count` — Count records matching a filter
 - `odoo_diagnose_call` — Diagnose planned model calls without executing them
-- `odoo_preview_write` — Build a canonical non-executing write payload
-- `odoo_validate_write` — Validate payload against SafetyGuard and live metadata
+- `odoo_preview_write` — Build a canonical non-executing mutation payload
+- `odoo_validate_write` — Validate payload against SafetyGuard and live metadata (when applicable)
 - `odoo_execute_approved_write` — Execute only with token + confirm + env gate
 - `odoo_setup_credentials` — Save/update credentials
 
 ## Write Approval Flow
 
-All mutating writes follow a strict staged approval flow. There is no direct generic write/create tool.
+All mutating operations follow a strict staged approval flow, except internal notes.
+Internal notes are the only direct mutation endpoint.
 
 1. `odoo_preview_write`
-  - Builds a canonical draft payload (`model`, `operation`, `record_ids`, `values`)
+  - Builds a canonical draft payload (`model`, `operation`, `record_ids`, `values`, `method`, `args`, `kwargs`)
   - Does not validate against live Odoo metadata
   - Does not execute anything
 2. `odoo_validate_write`
   - Applies `SafetyGuard` policy checks
-  - Validates payload fields against live `fields_get` metadata
+  - Validates payload fields against live `fields_get` metadata for `create`/`write`
   - Issues a short-lived, single-use `approval_token`
 3. User approval in conversation
   - Claude/Clawdbot must ask for explicit user confirmation before any execution step
@@ -111,7 +112,7 @@ All mutating writes follow a strict staged approval flow. There is no direct gen
   - Requires `confirm=true`
   - Requires a valid unused token from step 2
   - Requires `ODOO_MCP_ENABLE_WRITES=1`
-  - Executes only the validated operation (`create` or `write`)
+  - Executes only the validated operation (`create`, `write`, or `call`)
 
 Fail-closed behavior:
 
@@ -122,10 +123,10 @@ Fail-closed behavior:
 
 - `odoo_search_opportunities` — Find CRM deals with flexible filters
 - `odoo_get_opportunity` — Get full deal context (chatter, activities, all fields)
-- `odoo_propose_stage_change` — Move deals to different pipeline stages
-- `odoo_propose_log_note` — Add internal notes to deals
-- `odoo_propose_activity` — Schedule follow-ups (calls, to-dos, meetings)
-- `odoo_propose_field_update` — Update revenue, closing dates, and other fields
+- `odoo_propose_stage_change` — Build staged payload to move deals to another stage
+- `odoo_propose_log_note` — Add internal notes to deals directly (safe)
+- `odoo_propose_activity` — Build staged payload for a follow-up activity
+- `odoo_propose_field_update` — Build staged payload for allowed field updates
 - `odoo_search_contacts` — Find contacts/companies
 - `odoo_get_pipeline_summary` — See pipeline health: deal counts, total revenue by stage
 

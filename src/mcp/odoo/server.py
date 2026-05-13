@@ -465,7 +465,7 @@ async def odoo_preview_write(input: OdooPreviewWriteInput) -> dict[str, Any]:
 
 @mcp.tool(
     name="odoo_validate_write",
-    description="Dry-run step 2: validate a write draft with SafetyGuard and live fields_get metadata, then issue a short-lived single-use approval token; does not execute writes.",
+    description="Dry-run step 2: validate a write draft with SafetyGuard and live fields_get metadata, then issue a short-lived single-use approval token for explicit user approval in conversation; does not execute writes.",
     annotations={"title": "Validate Write", "readOnlyHint": True, "destructiveHint": False},
 )
 async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> dict[str, Any] | str:
@@ -549,7 +549,7 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
 
 @mcp.tool(
     name="odoo_execute_approved_write",
-    description="Step 3 (execution): perform create/write only when confirm=true, token is valid and unused, and ODOO_MCP_ENABLE_WRITES=1; otherwise fail closed.",
+    description="Step 3 (execution): perform create/write only after explicit user approval and only when confirm=true, token is valid and unused, and ODOO_MCP_ENABLE_WRITES=1; otherwise fail closed.",
     annotations={"title": "Execute Approved Write", "readOnlyHint": False, "destructiveHint": True},
 )
 async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx: Context) -> dict[str, Any] | str:

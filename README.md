@@ -92,6 +92,32 @@ Credentials are stored in `~/.config/odoo-mcp/credentials.json` with mode `600` 
 - `odoo_execute_approved_write` — Execute only with token + confirm + env gate
 - `odoo_setup_credentials` — Save/update credentials
 
+## Write Approval Flow
+
+All mutating writes follow a strict staged approval flow. There is no direct generic write/create tool.
+
+1. `odoo_preview_write`
+  - Builds a canonical draft payload (`model`, `operation`, `record_ids`, `values`)
+  - Does not validate against live Odoo metadata
+  - Does not execute anything
+2. `odoo_validate_write`
+  - Applies `SafetyGuard` policy checks
+  - Validates payload fields against live `fields_get` metadata
+  - Issues a short-lived, single-use `approval_token`
+3. User approval in conversation
+  - Claude/Clawdbot must ask for explicit user confirmation before any execution step
+  - The validated payload must be accepted by the user as-is
+4. `odoo_execute_approved_write`
+  - Requires `confirm=true`
+  - Requires a valid unused token from step 2
+  - Requires `ODOO_MCP_ENABLE_WRITES=1`
+  - Executes only the validated operation (`create` or `write`)
+
+Fail-closed behavior:
+
+- Missing confirmation, invalid/expired token, or disabled runtime write gate blocks execution.
+- Tokens are single-use and payload-bound; replay and drift attempts are rejected.
+
 ### Sales & Pre-Sales Tools
 
 - `odoo_search_opportunities` — Find CRM deals with flexible filters
@@ -145,7 +171,7 @@ The **SafetyGuard** in `src/mcp/odoo/utils/safety.py` blocks:
 │  (FastMCP + Domain Tool Modules + SafetyGuard)                     │
 │                                                                    │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ Generic Tools (search, read, write, create, log_note, etc.)  │  │
+│  │ Generic Tools (search, read, diagnostics, staged writes, etc.)│  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │ Domain Tool Modules                                          │  │
@@ -233,11 +259,13 @@ README.md                   ← This file
 
 ### Safety Validation
 
-All writes go through `SafetyGuard.validate_write()`. **Never bypass this** — it's the first of three layers preventing accidental outbound communication:
+All writes go through staged validation and execution gates. **Never bypass this** — these layers prevent accidental outbound communication:
 
-1. **Code layer** (SafetyGuard) — blocks dangerous models/methods
-2. **Human layer** (Claude conversation) — upstream approval before tool calls
-3. **Odoo layer** — Odoo's own permissions
+1. **Code layer** (`SafetyGuard`) — blocks dangerous models/methods
+2. **Validation layer** (`odoo_validate_write`) — enforces live schema checks and token issuance
+3. **Human layer** (Claude conversation) — explicit user approval before execution
+4. **Execution gates** (`odoo_execute_approved_write`) — requires `confirm=true`, valid token, and runtime env gate
+5. **Odoo layer** — Odoo's own permissions
 
 ## Limitations & Roadmap
 
@@ -245,7 +273,7 @@ All writes go through `SafetyGuard.validate_write()`. **Never bypass this** — 
 
 - ✅ CRM pipeline (leads, opportunities, contacts)
 - ✅ Project delivery (projects, tasks)
-- ✅ Generic Odoo tools (search, read, write, create)
+- ✅ Generic Odoo tools (search, read, diagnostics, staged write flow)
 - ✅ Internal notes & activities (safe only)
 
 ### Planned (v0.2+)

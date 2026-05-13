@@ -10,7 +10,7 @@ Claude (client) ←→ [stdio] ←→ Odoo MCP Server (this repo) ←→ Odoo AP
 
 ## Credential Model: Per-User, Local
 
-Each Claude user has their own credentials file at `~/.config/elewa-odoo/credentials.json` (Unix/macOS) or similar on Windows. This file is:
+Each Claude user has their own credentials file at `~/.config/my-odoo/credentials.json` (Unix/macOS) or similar on Windows. This file is:
 
 - Created by the user running `odoo_setup_credentials` tool (in Claude)
 - Stored with mode `600` (owner-only read/write)

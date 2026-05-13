@@ -436,14 +436,14 @@ class OdooSetupCredentialsInput(BaseModel):
     name="odoo_setup_credentials",
     description=(
         "Save your personal Odoo credentials so Elewa Odoo tools can connect on your behalf. "
-        "Run this once. Credentials are stored in your user home directory (~/.config/elewa-odoo/) "
+        "Run this once. Credentials are stored in your user home directory (~/.config/my-odoo/) "
         "and are only accessible to you. To generate an API key: go to Odoo Settings > "
         "Users > your profile > API Keys tab > New API Key."
     ),
     annotations={"title": "Set Up Odoo Credentials", "readOnlyHint": False, "destructiveHint": False},
 )
 async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
-    """Tool: write per-user Odoo credentials to ~/.config/elewa-odoo/credentials.json.
+    """Tool: write per-user Odoo credentials to ~/.config/my-odoo/credentials.json.
 
     Validates the credentials against Odoo before storing them.
     Does not require an existing authenticated session.

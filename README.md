@@ -66,7 +66,7 @@ Claude will prompt you for:
 - **Email** (your Odoo login)
 - **API Key** (from Settings > Users > your profile > API Keys)
 
-Credentials are stored in `~/.config/elewa-odoo/credentials.json` with mode `600` (owner-only read/write).
+Credentials are stored in `~/.config/my-odoo/credentials.json` with mode `600` (owner-only read/write).
 
 ## Tools
 
@@ -147,7 +147,7 @@ The **SafetyGuard** in `src/mcp/odoo/utils/safety.py` blocks:
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │ OdooClient + SafetyGuard                                      │  │
 │  │  • Async XML-RPC calls                                       │  │
-│  │  • Credential management (~/.config/elewa-odoo/...)          │  │
+│  │  • Credential management (~/.config/my-odoo/...)          │  │
 │  │  • Safety validation before all writes                       │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └────────────────────────────┬────────────────────────────────────────┘
@@ -255,7 +255,7 @@ All writes go through `SafetyGuard.validate_write()`. **Never bypass this** — 
 Claude should prompt: Tell Claude: 'Set up my Odoo credentials'
 ```
 
-Credentials are stored in `~/.config/elewa-odoo/credentials.json`. If this file is missing or incomplete, run credential setup again.
+Credentials are stored in `~/.config/my-odoo/credentials.json`. If this file is missing or incomplete, run credential setup again.
 
 ### "Odoo authentication failed"
 

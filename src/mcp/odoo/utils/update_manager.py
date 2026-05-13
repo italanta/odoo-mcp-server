@@ -59,13 +59,15 @@ def _ssl_context() -> ssl.SSLContext:
 
 
 def _request_json(url: str, timeout: int) -> dict | list:
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "odoo-mcp-server-update-manager",
-        },
-    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "odoo-mcp-server-update-manager",
+    }
+    # Authenticate when a token is available to avoid 60 req/hr anonymous limit.
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, headers=headers)
     with urlopen(request, timeout=timeout, context=_ssl_context()) as response:  # nosec B310 - controlled HTTPS URL.
         return json.loads(response.read().decode("utf-8"))
 

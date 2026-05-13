@@ -27,14 +27,47 @@ jobs:
       - name: Validate and pack bundle
         run: mcpb pack
 
+      - name: Generate client config snippets
+        run: python3 scripts/generate_client_configs.py
+
+      - name: Build release bundle archive
+        run: |
+          VERSION="${GITHUB_REF_NAME:-${GITHUB_SHA::7}}"
+          BUNDLE_NAME="odoo-mcp-server-${VERSION}-bundle"
+
+          mkdir -p dist/release
+          cp ./*.mcpb dist/release/
+          cp dist/client-configs/* dist/release/
+
+          (cd dist/release && zip -r "../${BUNDLE_NAME}.zip" .)
+          sha256sum "dist/${BUNDLE_NAME}.zip" > "dist/${BUNDLE_NAME}.zip.sha256"
+
       - name: Upload MCPB artifact
         uses: actions/upload-artifact@v4
         with:
           name: odoo-mcp-server-mcpb
           path: ./*.mcpb
 
+      - name: Upload client config artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: odoo-mcp-server-client-configs
+          path: dist/client-configs/*
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: odoo-mcp-server-release-bundle
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
       - name: Upload MCPB to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ./*.mcpb
+          files: |
+            ./*.mcpb
+            dist/client-configs/*
+            dist/*.zip
+            dist/*.sha256

@@ -82,12 +82,14 @@ Credentials are stored in `~/.config/odoo-mcp/credentials.json` with mode `600` 
 - `odoo_ping` — Validate connectivity and show your profile
 - `odoo_search_read` — Find records with flexible filters
 - `odoo_read_records` — Read specific records by ID
-- `odoo_write_records` — Update fields (safety-checked)
-- `odoo_create_record` — Create new records (safety-checked)
 - `odoo_log_internal_note` — Add internal chatter notes (never sends emails)
 - `odoo_schedule_activity` — Create reminders/to-dos
 - `odoo_fields_get` — Introspect model field definitions
 - `odoo_search_count` — Count records matching a filter
+- `odoo_diagnose_call` — Diagnose planned model calls without executing them
+- `odoo_preview_write` — Build a canonical non-executing write payload
+- `odoo_validate_write` — Validate payload against SafetyGuard and live metadata
+- `odoo_execute_approved_write` — Execute only with token + confirm + env gate
 - `odoo_setup_credentials` — Save/update credentials
 
 ### Sales & Pre-Sales Tools

@@ -45,37 +45,22 @@ uvx --from https://github.com/italanta/odoo-mcp-server odoo-mcp-server
 
 ## Setup
 
-### 1. Install in Claude Desktop
+Setup is centralized in [setup.md](setup.md).
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (or create it):
+This project supports two hosting modes only:
 
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "odoo-mcp-server"
-    }
-  }
-}
-```
+1. Personal agent hosting on local machines via Claude Desktop, ClawdBot, and Hermes.
+2. Org-wide hosting on Claude Cowork via plugin installation from your own fork.
 
-Then restart Claude Desktop.
+See [setup.md](setup.md) for install steps, transport settings, update flow, and security guidance.
 
-### 2. Set Up Credentials
+## Hosted MCP Server Warning
 
-In Claude, ask:
+Do not host this package as a shared central MCP server for multiple users.
 
-> Set up my Odoo credentials
+Odoo access relies on private API tokens. Central hosting would concentrate those tokens in one service, creating unnecessary credential custody and lateral-access risk.
 
-Claude will prompt you for:
-- **Odoo URL** (e.g., `https://my.odoo.com`)
-- **Database name** (e.g., `elewa-prod-12345`)
-- **Email** (your Odoo login)
-- **API Key** (from Settings > Users > your profile > API Keys)
-
-Important: use an Odoo API key, not your Odoo account password.
-
-Credentials are stored in `~/.config/odoo-mcp/credentials.json` with mode `600` (owner-only read/write).
+This package is designed to run inside the supported harnesses documented in [setup.md](setup.md), where each user or managed plugin environment controls its own credentials.
 
 ## Tools
 

@@ -56,6 +56,26 @@ Use:
 }
 ```
 
+If Claude Desktop cannot find `uvx`, use an absolute path to `uvx` instead.
+
+Find the path:
+- macOS: `which uvx`
+
+```json
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "/absolute/path/to/uvx",
+      "args": [
+        "--from",
+        "https://github.com/italanta/odoo-mcp-server",
+        "odoo-mcp-server"
+      ]
+    }
+  }
+}
+```
+
 ### 3) Restart Claude Desktop
 
 Completely quit and reopen Claude Desktop.
@@ -74,7 +94,7 @@ Provide:
 
 Credentials are saved per user at:
 
-`~/.config/my-odoo/credentials.json`
+`~/.config/odoo-mcp/credentials.json`
 
 ### 5) Verify
 
@@ -127,6 +147,26 @@ Use:
 }
 ```
 
+If Claude Desktop cannot find `uvx`, use an absolute path to `uvx.exe` instead.
+
+Find the path in PowerShell:
+- `Get-Command uvx | Select-Object -ExpandProperty Source`
+
+```json
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "C:\\absolute\\path\\to\\uvx.exe",
+      "args": [
+        "--from",
+        "https://github.com/italanta/odoo-mcp-server",
+        "odoo-mcp-server"
+      ]
+    }
+  }
+}
+```
+
 ### 3) Restart Claude Desktop
 
 Completely quit and reopen Claude Desktop.
@@ -145,6 +185,10 @@ Provide:
 
 Credentials are saved in the user profile used by the MCP process.
 
+Typical location on Windows:
+
+`C:\Users\<your-user>\.config\odoo-mcp\credentials.json`
+
 ### 5) Verify
 
 Ask Claude:
@@ -159,14 +203,25 @@ Ask Claude:
   - Re-check URL, database, email, and API key.
 - If tools do not appear:
   - Re-open Claude Desktop and confirm JSON syntax is valid.
+- If Claude cannot find `uvx`:
+  - Use the absolute-Python fallback config shown above.
 
 ## Alternative: Local Development Install
 
 If you are actively developing this repository, use a local install instead of `uvx`:
 
+macOS:
+
 ```bash
 cd /Users/jenterosseel/Documents/GitHub/odoo-mcp-server
 pip install -e .
+```
+
+Windows (PowerShell):
+
+```powershell
+cd C:\Users\<your-user>\Documents\GitHub\odoo-mcp-server
+py -m pip install -e .
 ```
 
 Then set Claude config to:

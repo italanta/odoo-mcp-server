@@ -98,6 +98,23 @@ class TestValidateWrite:
         assert result["approval"]["token"]
         assert result["metadata_used"] == {"live_odoo": False}
 
+    @pytest.mark.asyncio
+    async def test_validate_rejects_delete_unlink_call(self, isolated_governance, fake_ctx):
+        ctx, _ = fake_ctx
+        result = await server.odoo_validate_write(
+            server.OdooValidateWriteInput(
+                model="crm.lead",
+                operation="call",
+                method="unlink",
+                args=[[42]],
+            ),
+            ctx,
+        )
+
+        assert result["success"] is False
+        assert "BLOCKED" in result["error"]
+        assert "unlink" in result["error"]
+
 
 class TestExecuteApprovedWrite:
     @pytest.mark.asyncio

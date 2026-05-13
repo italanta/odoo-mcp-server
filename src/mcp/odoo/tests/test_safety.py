@@ -39,6 +39,7 @@ class TestBlockedMethods:
     """Methods that trigger outbound communication."""
 
     @pytest.mark.parametrize("method", [
+        "unlink",
         "action_send_mail",
         "action_quotation_send",
         "action_invoice_sent",

@@ -73,6 +73,8 @@ Claude will prompt you for:
 - **Email** (your Odoo login)
 - **API Key** (from Settings > Users > your profile > API Keys)
 
+Important: use an Odoo API key, not your Odoo account password.
+
 Credentials are stored in `~/.config/odoo-mcp/credentials.json` with mode `600` (owner-only read/write).
 
 ## Tools

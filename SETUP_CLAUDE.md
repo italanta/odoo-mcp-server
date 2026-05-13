@@ -121,6 +121,8 @@ Provide:
 - Odoo login email
 - Odoo API key
 
+Use an Odoo API key, not your Odoo account password.
+
 Credentials are saved per user at:
 
 `~/.config/odoo-mcp/credentials.json`
@@ -156,6 +158,22 @@ python --version
 Open:
 
 `%AppData%\Claude\claude_desktop_config.json`
+
+If you cannot find it, resolve and create it in PowerShell:
+
+```powershell
+$configDir = Join-Path $env:APPDATA "Claude"
+New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+$configPath = Join-Path $configDir "claude_desktop_config.json"
+if (-not (Test-Path $configPath)) { New-Item -ItemType File -Path $configPath | Out-Null }
+Write-Output $configPath
+```
+
+Then open it:
+
+```powershell
+notepad $configPath
+```
 
 If it does not exist, create it.
 
@@ -211,6 +229,8 @@ Provide:
 - Database name
 - Odoo login email
 - Odoo API key
+
+Use an Odoo API key, not your Odoo account password.
 
 Credentials are saved in the user profile used by the MCP process.
 

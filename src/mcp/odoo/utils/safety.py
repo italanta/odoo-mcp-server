@@ -30,6 +30,7 @@ BLOCKED_MODELS = frozenset({
 })
 
 BLOCKED_METHODS = frozenset({
+    "unlink",  # Record deletion
     "action_send_mail",  # Quotation/Invoice email sending
     "action_quotation_send",  # Quotation email
     "action_invoice_sent",  # Invoice email

@@ -718,7 +718,13 @@ class OdooSetupCredentialsInput(BaseModel):
     url: str = Field(..., description="Odoo URL, e.g. https://my.odoo.com")
     db: str = Field(..., description="Odoo database name")
     username: str = Field(..., description="Your Odoo login email")
-    api_key: str = Field(..., description="Your Odoo API key (Settings > Users > API Keys tab)")
+    api_key: str = Field(
+        ...,
+        description=(
+            "Your Odoo API key (Settings > Users > API Keys tab). "
+            "Do not use your Odoo account password."
+        ),
+    )
 
 
 @mcp.tool(
@@ -726,7 +732,8 @@ class OdooSetupCredentialsInput(BaseModel):
     description=(
         "Save your personal Odoo credentials so Odoo tools can connect on your behalf. "
         "Run this once. Credentials are stored in your user home directory (~/.config/odoo-mcp/) "
-        "and are only accessible to you. To generate an API key: go to Odoo Settings > "
+        "and are only accessible to you. This tool requires an API key, not your login password. "
+        "To generate an API key: go to Odoo Settings > "
         "Users > your profile > API Keys tab > New API Key."
     ),
     annotations={"title": "Set Up Odoo Credentials", "readOnlyHint": False, "destructiveHint": False},

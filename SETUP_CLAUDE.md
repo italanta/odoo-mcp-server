@@ -1,24 +1,55 @@
-# Claude Desktop Setup (macOS and Windows)
+# Claude Desktop Setup (Local-Only)
 
-This guide is split into two complete tracks so you can follow only your platform.
+This setup assumes the MCP server runs on each user's local machine.
 
-## Do I Need Python?
+## Quick Start: Install by Passing the Repo
 
-Short answer: not always on your own laptop, but yes somewhere.
+If your Claude environment supports plugin/repo install, this repository includes:
 
-- Claude Desktop on your Mac/PC: Yes. The MCP server runs locally, so a local runtime is required (Python directly, or `uv`/`uvx` which manages it for you).
-- Claude Cowork managed environment: Usually not on your personal machine. But the environment running the MCP server still needs Python available.
+- `.claude-plugin/plugin.json`
 
-Claude Cowork does not remove the Python requirement entirely. It shifts where Python must exist.
+Use that flow first. After install:
 
-## Choose Transport by Odoo Version
+1. Fully restart Claude Desktop.
+2. Run `Set up my Odoo credentials`.
+3. Run `Show my Odoo runtime info`.
 
-Set `ODOO_TRANSPORT` based on your Odoo version:
+## Transport Rule (Required)
 
-- Odoo 18 and below: use `xmlrpc`
-- Odoo 19 and above: use `json2`
+Set `ODOO_TRANSPORT` by Odoo version:
 
-If you want this explicitly in Claude Desktop config, add an `env` block:
+- Odoo 18 and below: `xmlrpc`
+- Odoo 19 and above: `json2`
+
+If you use `json2`, also provide an API key (`ODOO_API_KEY` or stored credentials).
+
+## macOS Manual Setup (Fallback)
+
+### 1) Install uv/uvx
+
+Option A (Homebrew):
+
+```bash
+brew install uv
+```
+
+Option B (official installer):
+
+- https://docs.astral.sh/uv/getting-started/installation/
+
+Verify:
+
+```bash
+uvx --version
+```
+
+### 2) Configure Claude Desktop
+
+Open:
+
+`~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Use:
 
 ```json
 {
@@ -31,173 +62,62 @@ If you want this explicitly in Claude Desktop config, add an `env` block:
         "odoo-mcp-server"
       ],
       "env": {
-        "ODOO_TRANSPORT": "json2"
+        "ODOO_TRANSPORT": "xmlrpc"
       }
     }
   }
 }
 ```
 
-For `json2`, also ensure an API key is configured (for example with `ODOO_API_KEY`).
+For Odoo 19+, set `ODOO_TRANSPORT` to `json2`.
 
-## macOS Track
-
-### 1) Install Python (3.11+)
-
-Option A (official installer):
-- Download from: `https://www.python.org/downloads/macos/`
-- Run the installer, then restart Terminal.
-
-Option B (Homebrew):
+If Claude cannot find `uvx`, use its absolute path:
 
 ```bash
-brew install python
+which uvx
+```
+
+Then set `command` to that full path.
+
+### 3) Restart and verify
+
+1. Fully quit and reopen Claude Desktop.
+2. Run `Set up my Odoo credentials`.
+3. Provide:
+- Odoo URL
+- Database name
+- Odoo login email
+- Odoo API key (not password)
+4. Run `Ping Odoo` and `Show my Odoo runtime info`.
+
+## Windows Manual Setup (Fallback)
+
+### 1) Install uv/uvx
+
+```powershell
+winget install -e --id astral-sh.uv
 ```
 
 Verify:
 
-```bash
-python3 --version
-```
-
-### 2) Add MCP Server to Claude Desktop
-
-Open:
-
-`~/Library/Application Support/Claude/claude_desktop_config.json`
-
-If it does not exist, create it.
-
-Use:
-
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "https://github.com/italanta/odoo-mcp-server",
-        "odoo-mcp-server"
-      ]
-    }
-  }
-}
-```
-
-If Claude Desktop cannot find `uvx`, use an absolute path to `uvx` instead.
-
-Find the path:
-- macOS: `which uvx`
-
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "/absolute/path/to/uvx",
-      "args": [
-        "--from",
-        "https://github.com/italanta/odoo-mcp-server",
-        "odoo-mcp-server"
-      ]
-    }
-  }
-}
-```
-
-### 3) Restart Claude Desktop
-
-Completely quit and reopen Claude Desktop.
-
-### 4) Set Credentials in Claude
-
-In Claude chat, say:
-
-`Set up my Odoo credentials`
-
-Provide:
-- Odoo URL (example: `https://my.odoo.com`)
-- Database name
-- Odoo login email
-- Odoo API key
-
-Use an Odoo API key, not your Odoo account password.
-
-Credentials are saved per user at:
-
-`~/.config/odoo-mcp/credentials.json`
-
-### 5) Verify
-
-Ask Claude:
-- `Ping Odoo`
-- `Show my Odoo runtime info`
-
-## Windows (Microsoft) Track
-
-### 1) Install Python (3.11+)
-
-Option A (official installer):
-- Download from: `https://www.python.org/downloads/windows/`
-- Run installer and enable `Add Python to PATH`.
-
-Option B (winget):
-
 ```powershell
-winget install -e --id Python.Python.3.12
+uvx --version
+Get-Command uvx | Select-Object -ExpandProperty Source
 ```
 
-Verify (PowerShell):
-
-```powershell
-python --version
-```
-
-### 2) Add MCP Server to Claude Desktop
-
-Open:
-
-`%AppData%\Claude\claude_desktop_config.json`
-
-If you cannot find it, resolve and create it in PowerShell:
+### 2) Create or open Claude config
 
 ```powershell
 $configDir = Join-Path $env:APPDATA "Claude"
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 $configPath = Join-Path $configDir "claude_desktop_config.json"
-if (-not (Test-Path $configPath)) { New-Item -ItemType File -Path $configPath | Out-Null }
-Write-Output $configPath
-```
-
-Then open it:
-
-```powershell
+if (-not (Test-Path $configPath)) { "{}" | Set-Content -Path $configPath -Encoding UTF8 }
 notepad $configPath
 ```
 
-If it does not exist, create it.
+### 3) Use absolute uvx path (most reliable)
 
-Use:
-
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "https://github.com/italanta/odoo-mcp-server",
-        "odoo-mcp-server"
-      ]
-    }
-  }
-}
-```
-
-If Claude Desktop cannot find `uvx`, use an absolute path to `uvx.exe` instead.
-
-Find the path in PowerShell:
-- `Get-Command uvx | Select-Object -ExpandProperty Source`
+Use the `Get-Command uvx` output as `command`:
 
 ```json
 {
@@ -208,56 +128,42 @@ Find the path in PowerShell:
         "--from",
         "https://github.com/italanta/odoo-mcp-server",
         "odoo-mcp-server"
-      ]
+      ],
+      "env": {
+        "ODOO_TRANSPORT": "xmlrpc"
+      }
     }
   }
 }
 ```
 
-### 3) Restart Claude Desktop
+For Odoo 19+, set `ODOO_TRANSPORT` to `json2`.
 
-Completely quit and reopen Claude Desktop.
+### 4) Restart and verify
 
-### 4) Set Credentials in Claude
-
-In Claude chat, say:
-
-`Set up my Odoo credentials`
-
-Provide:
+1. Fully quit and reopen Claude Desktop.
+2. Run `Set up my Odoo credentials`.
+3. Provide:
 - Odoo URL
 - Database name
 - Odoo login email
-- Odoo API key
-
-Use an Odoo API key, not your Odoo account password.
-
-Credentials are saved in the user profile used by the MCP process.
-
-Typical location on Windows:
-
-`C:\Users\<your-user>\.config\odoo-mcp\credentials.json`
-
-### 5) Verify
-
-Ask Claude:
-- `Ping Odoo`
-- `Show my Odoo runtime info`
+- Odoo API key (not password)
+4. Run `Ping Odoo` and `Show my Odoo runtime info`.
 
 ## Troubleshooting
 
-- If Claude says credentials are missing:
-  - Run `Set up my Odoo credentials` again.
-- If authentication fails:
-  - Re-check URL, database, email, and API key.
-- If tools do not appear:
-  - Re-open Claude Desktop and confirm JSON syntax is valid.
-- If Claude cannot find `uvx`:
-  - Use the absolute-Python fallback config shown above.
+- `uvx` works in terminal but not Claude:
+  - Use absolute `uvx` path in config `command`.
+- Tools do not appear:
+  - Validate JSON syntax and fully restart Claude Desktop.
+- Auth fails:
+  - Re-check URL, DB, email, API key, and transport version rule.
+- Prompt asks for password:
+  - Use API key only.
 
-## Alternative: Local Development Install
+## Local Development Install
 
-If you are actively developing this repository, use a local install instead of `uvx`:
+If developing this repository locally:
 
 macOS:
 
@@ -266,21 +172,9 @@ cd /Users/jenterosseel/Documents/GitHub/odoo-mcp-server
 pip install -e .
 ```
 
-Windows (PowerShell):
+Windows:
 
 ```powershell
 cd C:\Users\<your-user>\Documents\GitHub\odoo-mcp-server
 py -m pip install -e .
-```
-
-Then set Claude config to:
-
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "odoo-mcp-server"
-    }
-  }
-}
 ```

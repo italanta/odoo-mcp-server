@@ -1,0 +1,65 @@
+{
+  "manifest_version": "0.4",
+  "name": "odoo-mcp-server",
+  "display_name": "Odoo MCP Server",
+  "version": "0.1.0",
+  "description": "Local Odoo MCP server with safe staged writes and transport-aware compatibility.",
+  "author": {
+    "name": "Elewa"
+  },
+  "server": {
+    "type": "uv",
+    "entry_point": "src/mcp/odoo/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "src/mcp/odoo/server.py"
+      ],
+      "env": {
+        "ODOO_TRANSPORT": "${user_config.odoo_transport}",
+        "ODOO_API_KEY": "${user_config.odoo_api_key}"
+      }
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  },
+  "user_config": {
+    "odoo_transport": {
+      "type": "string",
+      "title": "Odoo transport",
+      "description": "Use xmlrpc for Odoo 18 and below, json2 for Odoo 19 and above.",
+      "required": true,
+      "default": "xmlrpc"
+    },
+    "odoo_api_key": {
+      "type": "string",
+      "title": "Odoo API key (optional env override)",
+      "description": "API key environment. Leave blank if you already stored credentials.",
+      "required": false,
+      "sensitive": true
+    }
+  },
+  "tools_generated": true,
+  "keywords": [
+    "odoo",
+    "mcp",
+    "crm",
+    "projects"
+  ],
+  "license": "Proprietary",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/italanta/odoo-mcp-server"
+  }
+}

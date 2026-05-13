@@ -11,6 +11,35 @@ Short answer: not always on your own laptop, but yes somewhere.
 
 Claude Cowork does not remove the Python requirement entirely. It shifts where Python must exist.
 
+## Choose Transport by Odoo Version
+
+Set `ODOO_TRANSPORT` based on your Odoo version:
+
+- Odoo 18 and below: use `xmlrpc`
+- Odoo 19 and above: use `json2`
+
+If you want this explicitly in Claude Desktop config, add an `env` block:
+
+```json
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "https://github.com/italanta/odoo-mcp-server",
+        "odoo-mcp-server"
+      ],
+      "env": {
+        "ODOO_TRANSPORT": "json2"
+      }
+    }
+  }
+}
+```
+
+For `json2`, also ensure an API key is configured (for example with `ODOO_API_KEY`).
+
 ## macOS Track
 
 ### 1) Install Python (3.11+)

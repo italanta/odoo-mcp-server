@@ -1,1 +1,1 @@
-"""Odoo utilities — client and safety."""
+"""Odoo utilities — safety, diagnostics, and supporting helpers."""

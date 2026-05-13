@@ -12,7 +12,7 @@ from typing import Any, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.mcp.odoo.utils.client import OdooClient
+from src.mcp.odoo.connection.client import OdooClient
 
 # ── Shared ──
 

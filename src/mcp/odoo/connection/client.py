@@ -1,12 +1,12 @@
 """
 Odoo API Client.
 
-Authenticated XML-RPC client for Odoo 19 with built-in safety guard.
-All write operations are validated against the outbound communication blocker
-before execution.
+Transport-selected Odoo client with built-in safety guard.
+Each OdooClient instance binds to exactly one transport backend for its whole
+session so a single connection never mixes XML-RPC and JSON-2 calls.
 
 Usage:
-    from src.mcp.odoo.utils.client import OdooClient
+    from src.mcp.odoo.connection.client import OdooClient
 
     async with OdooClient() as odoo:
         # Read operations — no approval needed
@@ -19,53 +19,68 @@ Usage:
         await odoo.log_note("crm.lead", lead_id, "Updated stage based on email analysis")
 """
 
-import asyncio
-import logging
-import ssl
-import xmlrpc.client
 from typing import Any
-from functools import partial
 
-import certifi
-
-from src.core.credentials import get_odoo_credentials, OdooCredentials, setup_advice
-from src.mcp.odoo.utils.safety import SafetyGuard, SafetyViolation
-
-logger = logging.getLogger(__name__)
+from src.core.credentials import OdooCredentials, get_odoo_credentials, setup_advice
+from src.mcp.odoo.connection.base_transport import transport_from_env
+from src.mcp.odoo.connection.transport_factory import build_transport_client
+from src.mcp.odoo.utils.safety import SafetyGuard
 
 
 class OdooClient:
     """
-    Async-compatible Odoo XML-RPC client with safety guard.
+    Async-compatible Odoo client facade with transport-specific backends.
 
-    All XML-RPC calls are run in a thread executor to avoid blocking the event loop.
-    All write operations pass through SafetyGuard before execution.
+    Each instance binds to one transport backend at construction time so callers
+    do not mix XML-RPC and JSON-2 within the same session.
     """
 
     _model_id_cache: dict[str, int] = {}
 
-    def __init__(self, credentials: OdooCredentials | None = None):
+    def __init__(self, credentials: OdooCredentials | None = None, transport: str | None = None):
         """
         Initialize with credentials from per-user config file (default) or explicit credentials.
 
         Args:
             credentials: Optional explicit credentials. If None, reads from get_odoo_credentials().
+            transport: Optional explicit transport. If None, reads ODOO_TRANSPORT.
         """
+        # Resolve credentials and transport once up front so one OdooClient maps
+        # to one consistent connection strategy for its entire lifetime.
         self._creds = credentials or get_odoo_credentials()
-        self._uid: int | None = None
-        self._common: xmlrpc.client.ServerProxy | None = None
-        self._models: xmlrpc.client.ServerProxy | None = None
+        self._transport_name = (transport or transport_from_env()).strip().lower()
+        # Safety checks stay at the facade level so the policy is applied no
+        # matter which transport backend ultimately sends the request.
         self._safety = SafetyGuard()
+        # The factory hides the concrete class selection from callers and keeps
+        # transport-specific construction logic out of this business-facing API.
+        self._transport = build_transport_client(self._creds, self._transport_name)
+        self._uid: int | None = None
+
+    @property
+    def transport_name(self) -> str:
+        return self._transport.transport_name
+
+    @property
+    def compatibility_hints(self) -> list[str]:
+        return self._transport.compatibility_hints
 
     async def __aenter__(self) -> "OdooClient":
         """Authenticate and return client."""
+        # Support ``async with OdooClient()`` ergonomics for callers that want
+        # transport setup/teardown bundled into one scope.
         await self.authenticate()
         return self
 
     async def __aexit__(self, *args: Any) -> None:
         """Cleanup."""
-        self._common = None
-        self._models = None
+        await self.close()
+
+    async def close(self) -> None:
+        """Release any transport resources held by this client."""
+        # The facade does not know whether the backend owns sockets, proxies, or
+        # something else; it just delegates shutdown to the transport instance.
+        await self._transport.close()
 
     async def authenticate(self) -> int:
         """
@@ -77,76 +92,30 @@ class OdooClient:
         Raises:
             ConnectionError: If authentication fails.
         """
-        loop = asyncio.get_running_loop()
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-
-        self._common = xmlrpc.client.ServerProxy(
-            f"{self._creds.url}/xmlrpc/2/common", context=ssl_context
-        )
-        self._models = xmlrpc.client.ServerProxy(
-            f"{self._creds.url}/xmlrpc/2/object", context=ssl_context
-        )
-
-        uid = await loop.run_in_executor(
-            None,
-            partial(
-                self._common.authenticate,
-                self._creds.db,
-                self._creds.username,
-                self._creds.api_key,
-                {},
-            ),
-        )
-
-        if not uid:
-            raise ConnectionError(
-                f"Odoo authentication failed for {self._creds.username} at {self._creds.url}. "
-                + setup_advice()
-            )
-
+        # Persist the resolved current-user id on the facade because higher-level
+        # helpers such as ``get_current_user`` rely on it independent of backend.
+        uid = await self._transport.authenticate()
         self._uid = uid
-        logger.info(f"Authenticated as uid={uid} on {self._creds.url}")
         return uid
 
     async def _execute(self, model: str, method: str, *args: Any, **kwargs: Any) -> Any:
-        """
-        Execute an Odoo XML-RPC call in a thread executor.
-
-        Args:
-            model: Odoo model name (e.g. 'crm.lead')
-            method: Method to call (e.g. 'search_read')
-            *args: Positional arguments
-            **kwargs: Keyword arguments
-
-        Returns:
-            Result from Odoo API
-        """
-        if not self._uid or not self._models:
+        """Execute a model call via the transport selected for this client instance."""
+        # Refuse to proxy calls before the transport has authenticated. This
+        # keeps the facade state machine explicit and predictable for callers.
+        if not self._uid:
             raise RuntimeError("Not authenticated. " + setup_advice())
-
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            partial(
-                self._models.execute_kw,
-                self._creds.db,
-                self._uid,
-                self._creds.api_key,
-                model,
-                method,
-                list(args) if args else [],
-                kwargs if kwargs else {},
-            ),
-        )
-
-    # ── Read Operations (no safety check needed) ──
+        return await self._transport.execute(model, method, *args, **kwargs)
 
     async def search(self, model: str, domain: list, limit: int = 80, offset: int = 0) -> list[int]:
         """Search for record IDs matching a domain filter."""
+        # Search is intentionally thin; transport-specific argument encoding is
+        # handled below the facade.
         return await self._execute(model, "search", domain, limit=limit, offset=offset)
 
     async def read(self, model: str, ids: list[int], fields: list[str] | None = None) -> list[dict]:
         """Read specific records by ID."""
+        # Preserve the existing high-level method signature used throughout the
+        # server while letting each transport map it to its native wire format.
         kwargs = {"fields": fields} if fields else {}
         return await self._execute(model, "read", ids, **kwargs)
 
@@ -160,6 +129,8 @@ class OdooClient:
         order: str | None = None,
     ) -> list[dict]:
         """Search and read in one call. Most common read operation."""
+        # ``search_read`` is especially important to preserve as one method call
+        # because Odoo documents the transaction-safety advantage explicitly.
         kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
         if fields:
             kwargs["fields"] = fields
@@ -173,70 +144,39 @@ class OdooClient:
 
     async def fields_get(self, model: str, attributes: list[str] | None = None) -> dict:
         """Get field definitions for a model."""
+        # This helper feeds both schema introspection and write-validation flows,
+        # so we keep the public method transport-neutral.
         attrs = attributes or ["string", "type", "help", "required", "selection"]
         return await self._execute(model, "fields_get", attributes=attrs)
 
-    # ── Write Operations (safety-checked) ──
-
     async def write(self, model: str, ids: list[int], values: dict[str, Any]) -> bool:
-        """
-        Update records. Safety-checked against outbound communication rules.
-
-        Args:
-            model: Odoo model name
-            ids: Record IDs to update
-            values: Field values to write
-
-        Returns:
-            True if successful
-
-        Raises:
-            SafetyViolation: If the write would trigger outbound communication
-        """
+        """Update records. Safety-checked against outbound communication rules."""
+        # Safety is enforced before any backend-specific call mapping so policy
+        # violations are rejected consistently across transports.
         self._safety.validate_write(model, "write", values)
         return await self._execute(model, "write", ids, values)
 
     async def create(self, model: str, values: dict[str, Any]) -> int:
-        """
-        Create a record. Safety-checked.
-
-        Returns:
-            ID of the created record
-
-        Raises:
-            SafetyViolation: If creating this model would trigger outbound communication
-        """
+        """Create a record. Safety-checked."""
+        # Create follows the same pattern as write: validate first, then forward.
         self._safety.validate_write(model, "create", values)
         return await self._execute(model, "create", values)
 
     async def log_note(self, model: str, record_id: int, body: str) -> int:
-        """
-        Post an internal log note. This is the SAFE way to add notes to records.
-
-        Uses Odoo 19 pattern: message_type='comment' + subtype_id=2 (internal Note).
-        The subtype_id=2 ensures the message is internal-only — no email sent.
-
-        Falls back to Odoo 18 pattern (message_type='note') if Odoo 19 call fails.
-
-        Args:
-            model: Odoo model (e.g. 'crm.lead')
-            record_id: Record ID to post note on
-            body: HTML body of the note
-
-        Returns:
-            Message ID
-        """
-        # Odoo 19 pattern: comment + internal Note subtype
+        """Post an internal log note using the safe internal-note variants."""
+        # Default to the Odoo 19 internal-note pattern because it is the current
+        # supported path for direct safe note posting.
         kwargs = {
             "body": body,
             "message_type": "comment",
-            "subtype_id": 2,  # "Note" subtype (internal=True) — no email sent
+            "subtype_id": 2,
         }
         self._safety.validate_write(model, "message_post", kwargs)
         try:
+            # Try the Odoo 19-safe path first.
             return await self._execute(model, "message_post", [record_id], **kwargs)
         except Exception:
-            # Fallback to Odoo 18 pattern
+            # Fall back for older servers that still expect the Odoo 18 note form.
             kwargs_v18 = {
                 "body": body,
                 "message_type": "note",
@@ -251,31 +191,17 @@ class OdooClient:
         record_id: int,
         summary: str,
         date_deadline: str,
-        activity_type_id: int = 4,  # 4 = To-Do in standard Odoo
+        activity_type_id: int = 4,
         user_id: int | None = None,
         note: str = "",
     ) -> int:
-        """
-        Schedule an internal activity (to-do / reminder).
-
-        Activities are SAFE: they only appear in the user's Odoo activity feed
-        and never send external emails.
-
-        Args:
-            model: Odoo model (e.g. 'crm.lead')
-            record_id: Record to attach activity to
-            summary: Short activity title
-            date_deadline: Due date as 'YYYY-MM-DD'
-            activity_type_id: Activity type (4=To-Do, 1=Email, 2=Call, 3=Meeting)
-            user_id: Assigned user ID (defaults to current user)
-            note: Optional longer description
-
-        Returns:
-            Activity ID
-        """
-        # Activities are internal — safety check passes
+        """Schedule an internal activity (to-do / reminder)."""
+        # Activity creation is safe at the model-policy level but still goes
+        # through the selected transport for the actual ORM call.
         self._safety.validate_model_access("mail.activity", "create")
 
+        # Odoo activity creation needs the numeric ir.model id of the target
+        # model, so we resolve that here once per model and cache it.
         values: dict[str, Any] = {
             "res_model_id": await self._get_model_id(model),
             "res_id": record_id,
@@ -291,20 +217,20 @@ class OdooClient:
 
     async def _get_model_id(self, model_name: str) -> int:
         """Get the ir.model ID for a model name (cached)."""
+        # Cache model ids at the facade level because they are transport-agnostic
+        # and often reused by activity creation or similar helpers.
         if model_name in self._model_id_cache:
             return self._model_id_cache[model_name]
-        result = await self.search_read(
-            "ir.model", [("model", "=", model_name)], ["id"], limit=1
-        )
+        result = await self.search_read("ir.model", [("model", "=", model_name)], ["id"], limit=1)
         if not result:
             raise ValueError(f"Model '{model_name}' not found in Odoo")
         self._model_id_cache[model_name] = result[0]["id"]
         return result[0]["id"]
 
-    # ── Convenience Methods ──
-
     async def get_current_user(self) -> dict:
         """Get the currently authenticated user's profile."""
+        # Use the stored uid from authenticate so callers can ask for current-user
+        # data in a transport-neutral way after session setup.
         if not self._uid:
             raise RuntimeError("Not authenticated. " + setup_advice())
         users = await self.read("res.users", [self._uid], ["name", "email", "company_id"])
@@ -312,4 +238,6 @@ class OdooClient:
 
     async def get_company_ids(self) -> list[dict]:
         """Get all companies the user has access to."""
+        # Keep this as a tiny convenience method because multiple tool surfaces
+        # may need the same read pattern and transport-agnostic behavior.
         return await self.search_read("res.company", [], ["name", "id"])

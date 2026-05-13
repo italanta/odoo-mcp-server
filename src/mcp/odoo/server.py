@@ -43,7 +43,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.mcp.odoo.utils.client import OdooClient
+from src.mcp.odoo.connection.client import OdooClient
 from src.core.credentials import CONFIG_PATH, store_odoo_credentials_file, setup_advice
 from src.mcp.odoo.utils.diagnostics import diagnose_odoo_call
 from src.mcp.odoo.utils.safety import SafetyGuard, SafetyViolation
@@ -92,7 +92,8 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     try:
         yield AppContext(odoo=client, auth_error=auth_error)
     finally:
-        pass
+        if client is not None:
+            await client.close()
 
 
 mcp = FastMCP(
@@ -750,7 +751,7 @@ async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
 
     # Validate credentials against Odoo before storing
     from src.core.credentials import OdooCredentials
-    from src.mcp.odoo.utils.client import OdooClient
+    from src.mcp.odoo.connection.client import OdooClient
 
     test_creds = OdooCredentials(
         url=input.url.rstrip("/"),
@@ -766,6 +767,8 @@ async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
             f"Credentials rejected by Odoo: {exc}. "
             "Double-check your URL, database name, email, and API key."
         )
+    finally:
+        await test_client.close()
 
     store_odoo_credentials_file(
         url=test_creds.url,
@@ -798,6 +801,18 @@ async def odoo_runtime_info() -> dict[str, Any]:
     if file_exists:
         file_mode = oct(config_path.stat().st_mode & 0o777)
 
+    configured_transport = os.environ.get("ODOO_TRANSPORT", "xmlrpc").strip().lower() or "xmlrpc"
+    compatibility_hints: list[str] = []
+    if configured_transport == "json2":
+        compatibility_hints = [
+            "JSON-2 requires Odoo 19+ and an API key in ODOO_API_KEY or stored credentials.",
+            "Current JSON-2 support covers core read operations and direct internal note posting.",
+        ]
+    else:
+        compatibility_hints = [
+            "XML-RPC remains the default compatibility transport for Odoo 16-19.",
+        ]
+
     return {
         "package": "odoo-mcp-server",
         "package_version": package_version,
@@ -806,6 +821,9 @@ async def odoo_runtime_info() -> dict[str, Any]:
         "credentials_path": str(config_path),
         "credentials_file_exists": file_exists,
         "credentials_file_mode": file_mode,
+        "odoo_transport": configured_transport,
+        "json2_api_key_configured": bool(os.environ.get("ODOO_API_KEY", "").strip()),
+        "transport_compatibility_hints": compatibility_hints,
         "write_execution_enabled": _truthy_env("ODOO_MCP_ENABLE_WRITES"),
     }
 

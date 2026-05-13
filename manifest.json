@@ -4,6 +4,7 @@
   "display_name": "Odoo MCP Server",
   "version": "0.1.0",
   "description": "Local Odoo MCP server with safe staged writes and transport-aware compatibility.",
+  "icon": "assets/logo.png",
   "author": {
     "name": "Elewa"
   },
@@ -57,7 +58,7 @@
     "crm",
     "projects"
   ],
-  "license": "Proprietary",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/italanta/odoo-mcp-server"

@@ -30,6 +30,7 @@ Run:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from importlib import metadata
@@ -47,6 +48,13 @@ from src.mcp.odoo.connection.client import OdooClient
 from src.core.credentials import CONFIG_PATH, store_odoo_credentials_file, setup_advice
 from src.mcp.odoo.utils.diagnostics import diagnose_odoo_call
 from src.mcp.odoo.utils.safety import SafetyGuard, SafetyViolation
+from src.mcp.odoo.utils.update_manager import (
+    apply_self_update,
+    build_upgrade_command,
+    check_for_update,
+    default_repo,
+    fetch_latest_release_or_tag,
+)
 from src.mcp.odoo.utils.write_approvals import ApprovalStore
 
 
@@ -420,6 +428,38 @@ class OdooExecuteApprovedWriteInput(BaseModel):
 
     approval_token: str = Field(..., description="Token returned by odoo_validate_write")
     confirm: bool = Field(..., description="Must be true to execute")
+
+
+class OdooCheckForUpdateInput(BaseModel):
+    """Input schema for MCP-native update checks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str | None = Field(
+        default=None,
+        description="Optional GitHub repo (owner/name). Defaults to canonical project source.",
+    )
+    timeout_seconds: int = Field(default=10, ge=3, le=60, description="GitHub API timeout in seconds")
+
+
+class OdooApplySelfUpdateInput(BaseModel):
+    """Input schema for guarded MCP self-update execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool = Field(
+        ...,
+        description="Must be true to run a local package manager update command.",
+    )
+    repo: str | None = Field(
+        default=None,
+        description="Optional GitHub repo (owner/name). Defaults to canonical project source.",
+    )
+    ref: str | None = Field(
+        default=None,
+        description="Optional tag/branch/ref to install. Defaults to latest release/tag.",
+    )
+    timeout_seconds: int = Field(default=300, ge=30, le=900, description="Local update command timeout in seconds")
 
 
 @mcp.tool(
@@ -832,6 +872,97 @@ async def odoo_runtime_info() -> dict[str, Any]:
         "json2_api_key_configured": bool(os.environ.get("ODOO_API_KEY", "").strip()),
         "transport_compatibility_hints": compatibility_hints,
         "write_execution_enabled": _truthy_env("ODOO_MCP_ENABLE_WRITES"),
+        "self_update_enabled": _truthy_env("ODOO_MCP_ENABLE_SELF_UPDATE"),
+    }
+
+
+@mcp.tool(
+    name="odoo_check_for_update",
+    description=(
+        "Check whether a newer odoo-mcp-server build is available from GitHub and "
+        "return a suggested upgrade command. Read-only: does not modify the local environment."
+    ),
+    annotations={"title": "Check MCP Update", "readOnlyHint": True, "destructiveHint": False},
+)
+async def odoo_check_for_update(input: OdooCheckForUpdateInput) -> dict[str, Any]:
+    """Tool: MCP-native update check for assistant-driven maintenance guidance."""
+    repo = (input.repo or "").strip() or default_repo()
+
+    # Network check is offloaded to a worker thread so the MCP event loop remains responsive.
+    result = await asyncio.to_thread(check_for_update, repo, input.timeout_seconds)
+    suggested_ref = result["latest_version"]
+    suggested_command = build_upgrade_command(repo=repo, ref=str(suggested_ref))
+
+    return {
+        "ok": True,
+        "tool": "odoo_check_for_update",
+        "repo": result["repo"],
+        "local_version": result["local_version"],
+        "latest_version": result["latest_version"],
+        "source": result["source"],
+        "update_available": result["update_available"],
+        "release_url": result["latest_url"],
+        "self_update_enabled": _truthy_env("ODOO_MCP_ENABLE_SELF_UPDATE"),
+        "suggested_upgrade_command": suggested_command,
+        "next": (
+            "If update_available is true and user approves, run odoo_apply_self_update "
+            "with confirm=true."
+        ),
+    }
+
+
+@mcp.tool(
+    name="odoo_apply_self_update",
+    description=(
+        "Run a local self-update for odoo-mcp-server using pip + git ref. "
+        "Requires explicit confirm=true and ODOO_MCP_ENABLE_SELF_UPDATE=1."
+    ),
+    annotations={"title": "Apply MCP Update", "readOnlyHint": False, "destructiveHint": True},
+)
+async def odoo_apply_self_update(input: OdooApplySelfUpdateInput) -> dict[str, Any]:
+    """Tool: guarded local self-update execution for MCP runtime."""
+    if not input.confirm:
+        return {
+            "ok": False,
+            "tool": "odoo_apply_self_update",
+            "error": "confirm must be true.",
+        }
+
+    # Separate gate from Odoo write execution; local package updates are sensitive too.
+    if not _truthy_env("ODOO_MCP_ENABLE_SELF_UPDATE"):
+        return {
+            "ok": False,
+            "tool": "odoo_apply_self_update",
+            "error": "Self-update is disabled. Set ODOO_MCP_ENABLE_SELF_UPDATE=1.",
+        }
+
+    repo = (input.repo or "").strip() or default_repo()
+    ref = (input.ref or "").strip()
+    if not ref:
+        latest = await asyncio.to_thread(fetch_latest_release_or_tag, repo, 15)
+        ref = str(latest["version"])
+
+    result = await asyncio.to_thread(
+        apply_self_update,
+        repo,
+        ref,
+        input.timeout_seconds,
+    )
+
+    return {
+        "ok": result["ok"],
+        "tool": "odoo_apply_self_update",
+        "repo": repo,
+        "ref": ref,
+        "command": result["command"],
+        "returncode": result["returncode"],
+        "stdout_tail": result["stdout_tail"],
+        "stderr_tail": result["stderr_tail"],
+        "restart_required": bool(result["ok"]),
+        "next": (
+            "Restart the MCP host/client process to load the updated package." if result["ok"]
+            else "Review stderr_tail and retry with a different ref or environment permissions."
+        ),
     }
 
 

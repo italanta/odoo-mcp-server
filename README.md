@@ -93,6 +93,8 @@ Credentials are stored in `~/.config/odoo-mcp/credentials.json` with mode `600` 
 - `odoo_validate_write` — Validate payload against SafetyGuard and live metadata (when applicable)
 - `odoo_execute_approved_write` — Execute only with token + confirm + env gate
 - `odoo_setup_credentials` — Save/update credentials
+- `odoo_check_for_update` — Check latest GitHub release/tag and suggest update command
+- `odoo_apply_self_update` — Apply local package update (guarded by explicit confirm + env gate)
 
 ## Write Approval Flow
 
@@ -120,6 +122,20 @@ Fail-closed behavior:
 
 - Missing confirmation, invalid/expired token, or disabled runtime write gate blocks execution.
 - Tokens are single-use and payload-bound; replay and drift attempts are rejected.
+
+## MCP Self-Update Flow (Optional)
+
+The MCP can suggest and apply its own update locally, but this is gated by default.
+
+1. `odoo_check_for_update`
+  - Read-only update check against GitHub releases/tags
+  - Returns current version, latest version, and a suggested upgrade command
+2. `odoo_apply_self_update`
+  - Requires `confirm=true`
+  - Requires `ODOO_MCP_ENABLE_SELF_UPDATE=1`
+  - Runs a local pip upgrade from the selected git ref/tag
+
+After successful self-update, restart the MCP host/client so the new package is loaded.
 
 ### Sales & Pre-Sales Tools
 

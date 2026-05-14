@@ -31,7 +31,7 @@ def setup_advice() -> str:
     """Return the canonical user-facing credential setup instruction."""
     return (
         "Tell Claude: 'Set up my Odoo credentials'. "
-        "Claude will run the 'odoo_setup_credentials' tool and ask for URL, database, email, and API key."
+        "Claude will run the 'odoo_setup_credentials' tool and ask for url, db, username, and api_key."
     )
 
 

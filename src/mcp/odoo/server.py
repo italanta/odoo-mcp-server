@@ -779,7 +779,7 @@ class OdooSetupCredentialsInput(BaseModel):
     ),
     annotations={"title": "Set Up Odoo Credentials", "readOnlyHint": False, "destructiveHint": False},
 )
-async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
+async def odoo_setup_credentials(input: OdooSetupCredentialsInput, ctx: Context | None = None) -> str:
     """Tool: write per-user Odoo credentials to ~/.config/odoo-mcp/credentials.json.
 
     Validates the credentials against Odoo before storing them.
@@ -799,7 +799,6 @@ async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
 
     # Validate credentials against Odoo before storing
     from src.core.credentials import OdooCredentials
-    from src.mcp.odoo.connection.client import OdooClient
 
     test_creds = OdooCredentials(
         url=input.url.rstrip("/"),
@@ -808,15 +807,18 @@ async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
         api_key=input.api_key.strip(),
     )
     test_client = OdooClient(credentials=test_creds)
+    authenticated = False
     try:
         await test_client.authenticate()
+        authenticated = True
     except Exception as exc:
         return (
             f"Credentials rejected by Odoo: {exc}. "
             "Double-check your URL, database name, email, and API key."
         )
     finally:
-        await test_client.close()
+        if not authenticated:
+            await test_client.close()
 
     store_odoo_credentials_file(
         url=test_creds.url,
@@ -824,6 +826,17 @@ async def odoo_setup_credentials(input: OdooSetupCredentialsInput) -> str:
         username=test_creds.username,
         api_key=test_creds.api_key,
     )
+
+    if ctx is not None:
+        # Refresh the in-memory app context immediately so the current Claude
+        # session can start using Odoo without requiring an extension restart.
+        context: AppContext = ctx.request_context.lifespan_context
+        previous_client = context.odoo
+        context.odoo = test_client
+        context.auth_error = None
+        if previous_client is not None and previous_client is not test_client:
+            await previous_client.close()
+
     return (
         f"Credentials saved for {test_creds.username}. "
         "Odoo tools are now active for your account. "
@@ -846,14 +859,21 @@ async def odoo_runtime_info() -> dict[str, Any]:
     config_path = Path(CONFIG_PATH)
     file_exists = config_path.exists()
     file_mode = None
+    stored_api_key_configured = False
     if file_exists:
         file_mode = oct(config_path.stat().st_mode & 0o777)
+        try:
+            stored_data = json.loads(config_path.read_text())
+            stored_api_key_configured = bool(str(stored_data.get("api_key", "")).strip())
+        except Exception:
+            stored_api_key_configured = False
 
     configured_transport = os.environ.get("ODOO_TRANSPORT", "xmlrpc").strip().lower() or "xmlrpc"
+    env_api_key_configured = bool(os.environ.get("ODOO_API_KEY", "").strip())
     compatibility_hints: list[str] = []
     if configured_transport == "json2":
         compatibility_hints = [
-            "JSON-2 requires Odoo 19+ and an API key in ODOO_API_KEY or stored credentials.",
+            "JSON-2 requires Odoo 19+ and an API key from ODOO_API_KEY or the stored credentials file.",
             "Current JSON-2 support covers core read operations and direct internal note posting.",
         ]
     else:
@@ -870,7 +890,9 @@ async def odoo_runtime_info() -> dict[str, Any]:
         "credentials_file_exists": file_exists,
         "credentials_file_mode": file_mode,
         "odoo_transport": configured_transport,
-        "json2_api_key_configured": bool(os.environ.get("ODOO_API_KEY", "").strip()),
+        "json2_env_api_key_configured": env_api_key_configured,
+        "json2_stored_api_key_configured": stored_api_key_configured,
+        "json2_api_key_available": env_api_key_configured or stored_api_key_configured,
         "transport_compatibility_hints": compatibility_hints,
         "write_execution_enabled": _truthy_env("ODOO_MCP_ENABLE_WRITES"),
         "self_update_enabled": _truthy_env("ODOO_MCP_ENABLE_SELF_UPDATE"),

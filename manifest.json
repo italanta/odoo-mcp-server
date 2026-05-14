@@ -3,7 +3,7 @@
   "name": "odoo-mcp-server",
   "display_name": "Odoo MCP Server",
   "version": "0.1.0",
-  "description": "Local Odoo MCP server with safe staged writes and transport-aware compatibility.",
+  "description": "Give Claude safe local access to your Odoo CRM and projects so it can search records, review context, draft approved updates, and log internal notes. Specific safegaurds which dont allow record deletes or anything which sends an external message",
   "icon": "assets/logo.png",
   "author": {
     "name": "Elewa"
@@ -39,14 +39,14 @@
     "odoo_transport": {
       "type": "string",
       "title": "Odoo transport",
-      "description": "Use xmlrpc for Odoo 18 and below, json2 for Odoo 19 and above.",
+      "description": "Choose xmlrpc for Odoo 18 and below, or json2 for Odoo 19 and above.",
       "required": true,
-      "default": "xmlrpc"
+      "default": "json2"
     },
     "odoo_api_key": {
       "type": "string",
-      "title": "Odoo API key (optional env override)",
-      "description": "API key environment. Leave blank if you already stored credentials.",
+      "title": "Odoo API key",
+      "description": "Paste your Odoo API key here - My Profile > Preferences > Security > Add new API Key.",
       "required": false,
       "sensitive": true
     }

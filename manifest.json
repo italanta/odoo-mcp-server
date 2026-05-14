@@ -3,7 +3,7 @@
   "name": "odoo-mcp-server",
   "display_name": "Odoo MCP Server",
   "version": "0.1.0",
-  "description": "Give Claude safe local access to your Odoo CRM and projects so it can search records, review context, draft approved updates, and log internal notes. Specific safegaurds which dont allow record deletes or anything which sends an external message",
+  "description": "Give Claude safe local access to your Odoo CRM and projects so it can search records, review context, draft approved updates, and log internal notes, while blocking deletes and external messages.",
   "icon": "assets/logo.png",
   "author": {
     "name": "Elewa"
@@ -45,8 +45,8 @@
     },
     "odoo_api_key": {
       "type": "string",
-      "title": "Odoo API key",
-      "description": "Paste your Odoo API key here - My Profile > Preferences > Security > Add new API Key.",
+      "title": "Odoo API key optional",
+      "description": "Optional shortcut for Odoo 19 json2. Full setup still happens in Claude, where you will enter your Odoo URL, database, email, and API key.",
       "required": false,
       "sensitive": true
     }

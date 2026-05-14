@@ -87,15 +87,16 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     Never crash on auth failure — store the error on AppContext so every
     tool can return it to Claude, who will relay the setup instruction.
     """
-    client = OdooClient()
+    client: OdooClient | None = None
     auth_error: str | None = None
     try:
+        # Client construction can fail before authenticate() when the local
+        # credential file does not exist yet. Keep startup alive so Claude can
+        # still expose odoo_setup_credentials to the user.
+        client = OdooClient()
         await client.authenticate()
     except (RuntimeError, Exception) as exc:
-        auth_error = (
-            f"Odoo is not authenticated: {exc}  "
-            + setup_advice()
-        )
+        auth_error = f"Odoo is not authenticated: {exc}"
         client = None
     try:
         yield AppContext(odoo=client, auth_error=auth_error)

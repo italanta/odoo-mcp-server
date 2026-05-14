@@ -20,8 +20,7 @@
         "src/mcp/odoo/server.py"
       ],
       "env": {
-        "ODOO_TRANSPORT": "${user_config.odoo_transport}",
-        "ODOO_API_KEY": "${user_config.odoo_api_key}"
+        "ODOO_TRANSPORT": "${user_config.odoo_transport}"
       }
     }
   },
@@ -42,13 +41,6 @@
       "description": "Choose xmlrpc for Odoo 18 and below, or json2 for Odoo 19 and above.",
       "required": true,
       "default": "json2"
-    },
-    "odoo_api_key": {
-      "type": "string",
-      "title": "Odoo API key optional",
-      "description": "Optional shortcut for Odoo 19 json2. Full setup still happens in Claude, where you will enter your Odoo URL, database, email, and API key.",
-      "required": false,
-      "sensitive": true
     }
   },
   "tools_generated": true,

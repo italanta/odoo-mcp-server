@@ -48,7 +48,8 @@ class Json2TransportClient(BaseTransportClient):
         # can describe what is safe to expect from the JSON-2 implementation.
         return [
             "JSON-2 is supported in Odoo 19+.",
-            "This transport currently guarantees core read operations plus direct internal note posting.",
+            "This transport maps core reads, internal note posting, and create/write mutations.",
+            "create/write mapping targets Odoo 19 JSON-2 semantics; validate with a single record if your instance rejects the request body.",
         ]
 
     async def authenticate(self) -> int:
@@ -145,6 +146,29 @@ class Json2TransportClient(BaseTransportClient):
             if not args:
                 raise ValueError("message_post requires record ids.")
             payload["ids"] = args[0]
+            payload.update(kwargs)
+            return payload
+
+        # JSON-2 bodies are named arguments matching the ORM method signature, plus
+        # optional ids/context (per Odoo 19 external_api docs). The authoritative,
+        # per-database contract is the instance's /doc endpoint — confirm there (or
+        # via a single-record smoke test) before relying on these in bulk.
+        if method == "create":
+            # ORM signature create(vals_list); no recordset to bind. The facade passes
+            # a single values dict — left as-is since create accepts a dict or a list.
+            if not args:
+                raise ValueError("create requires values.")
+            payload["vals_list"] = args[0]
+            payload.update(kwargs)
+            return payload
+
+        if method == "write":
+            # ORM signature write(vals); ids bind the target recordset, the same
+            # convention used by read/message_post above.
+            if len(args) < 2:
+                raise ValueError("write requires ids and values.")
+            payload["ids"] = args[0]
+            payload["vals"] = args[1]
             payload.update(kwargs)
             return payload
 

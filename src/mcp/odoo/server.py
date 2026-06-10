@@ -1168,7 +1168,7 @@ async def odoo_runtime_info(ctx: Context) -> dict[str, Any]:
     if configured_transport == "json2":
         compatibility_hints = [
             "JSON-2 requires Odoo 19+ and an API key from ODOO_API_KEY or the stored credentials file.",
-            "Current JSON-2 support covers core read operations and direct internal note posting.",
+            "JSON-2 support covers core reads, internal note posting, and create/write mutations.",
         ]
     else:
         compatibility_hints = [

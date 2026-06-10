@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "odoo-mcp-server",
   "display_name": "Odoo MCP Server",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Give Claude safe local access to your Odoo CRM and projects so it can search records, review context, draft approved updates, and log internal notes, while blocking deletes and external messages.",
   "icon": "assets/logo.png",
   "author": {

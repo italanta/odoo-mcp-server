@@ -5,24 +5,47 @@ This server exposes foundational (generic) Odoo tools plus domain-specific tools
 registered from separate modules under ``src.mcp.odoo.tools``.
 
 A single ``OdooClient`` instance is shared via the lifespan context — all domain
-tool modules reuse it, avoiding duplicate connections.
+tool modules reuse it, avoiding duplicate connections. Credentials may hold more
+than one Odoo database; the active database is chosen per session (automatically
+when one is configured, via elicitation when several are).
 
-Domain tool modules:
-- ``tools.sales``    — CRM pipeline, leads, contacts (8 tools)
-- ``tools.projects`` — Fixed-scope projects, tasks, milestones (6 tools)
+Prompts (read automatically by the assistant):
+- ``odoo_write_flow``         — Mandatory 3-step create/update flow.
+- ``odoo_database_selection`` — How to inspect and switch databases.
+- ``odoo_safety_policy``      — What the server will and will not do.
 
 Resources:
 - ``odoo://models``              — List all available Odoo models.
 - ``odoo://model/{model_name}``  — Introspect a specific model's fields.
 
-Generic tools:
-- ``odoo_ping``             — Validate connectivity and show authenticated user context.
+Read tools:
+- ``odoo_ping``             — Validate connectivity and show authenticated user + active db.
 - ``odoo_search_read``      — Read records with an Odoo domain filter.
 - ``odoo_read_records``     — Read explicit records by model + IDs.
-- ``odoo_log_internal_note``— Post chatter notes with ``message_type='note'`` only.
-- ``odoo_schedule_activity``— Create internal reminder activities.
 - ``odoo_fields_get``       — Introspect field definitions for a model.
 - ``odoo_search_count``     — Count records matching a domain filter.
+- ``odoo_diagnose_call``    — Non-executing analysis of a planned call.
+
+Write tools (3-step, approval-gated, fail-closed):
+- ``odoo_preview_write``          — Step 1: build a payload draft.
+- ``odoo_validate_write``         — Step 2: safety + schema check, issue approval token.
+- ``odoo_execute_approved_write`` — Step 3: execute after explicit approval.
+- ``odoo_log_internal_note``      — Post chatter notes with ``message_type='note'`` only.
+- ``odoo_schedule_activity``      — Create internal reminder activities.
+
+Writes are off by default and gated two ways: the ``ODOO_MCP_ENABLE_WRITES``
+environment flag (set via the extension's "Enable writes to Odoo" config), or
+``odoo_enable_session_writes`` which turns writes on for the current session only
+after explicit user consent — useful for batch inserts/updates without a restart.
+Deletes and outbound email are never permitted.
+
+Database & session tools:
+- ``odoo_setup_credentials``      — Add/update credentials for a database.
+- ``odoo_list_databases``         — List stored databases and the default.
+- ``odoo_switch_database``        — Switch the active database for the session.
+- ``odoo_enable_session_writes``  — Enable writes for this session (consent-gated).
+- ``odoo_disable_session_writes`` — Turn session writes back off.
+- ``odoo_runtime_info``           — Runtime diagnostics and write status.
 
 Run:
     python -m src.mcp.odoo.server
@@ -86,6 +109,7 @@ class AppContext:
     odoo: OdooClient | None
     auth_error: str | None = None
     session_db: str | None = None  # db chosen for this session via elicitation or explicit switch
+    session_writes: bool = False   # writes enabled for this session only via odoo_enable_session_writes
 
 
 @asynccontextmanager
@@ -124,6 +148,70 @@ mcp = FastMCP(
     "odoo_mcp",
     lifespan=app_lifespan,
 )
+
+
+@mcp.prompt()
+def odoo_write_flow() -> str:
+    """System instructions for the mandatory 3-step write flow."""
+    return """
+# Odoo write flow — MANDATORY
+
+Any operation that creates, updates, or calls records in Odoo MUST follow this exact 3-step sequence.
+Never attempt to skip or combine steps.
+
+## Step 1 — Preview: `odoo_preview_write`
+Build a canonical payload draft. Does not touch Odoo. Returns a `payload` object and instructs you to proceed to step 2.
+
+## Step 2 — Validate: `odoo_validate_write`
+Pass the payload from step 1. Runs safety checks and live schema validation against Odoo.
+On success returns an `approval.token` (short-lived, single-use). **Show the payload to the user and ask for explicit approval before proceeding.**
+
+## Step 3 — Execute: `odoo_execute_approved_write`
+Pass the `approval_token` from step 2 and set `confirm=true`. This is the only step that writes to Odoo.
+`confirm=true` must reflect genuine user approval — never set it speculatively.
+Writes must also be enabled in the extension configuration; if not, execution fails with a clear error.
+
+## Important
+- Approval tokens expire and are single-use. If a token expires before step 3, restart from step 1.
+- If `writes_currently_allowed: false` appears in `odoo_runtime_info`, writes are off. Two ways to enable:
+  - **Persistent:** open Claude Settings → Extensions → Odoo MCP Server → configuration, turn on "Enable writes to Odoo", and restart the extension (sets `ODOO_MCP_ENABLE_WRITES=1`).
+  - **This session only (good for batch inserts/updates):** call `odoo_enable_session_writes`. The user must confirm; no restart needed. Turn it back off with `odoo_disable_session_writes`.
+""".strip()
+
+
+@mcp.prompt()
+def odoo_database_selection() -> str:
+    """How to work with multiple Odoo databases in a session."""
+    return """
+# Working with Odoo databases
+
+This server may hold credentials for more than one Odoo database.
+
+- **Which database am I connected to?** Call `odoo_ping` — the `db` field in the response is the active session database.
+- **What databases are available?** Call `odoo_list_databases` — it returns all stored databases and the file-level default.
+- **Switch databases:** Call `odoo_switch_database` with the target `db`. This reconnects the session and persists the new default.
+- **First call of a session:** If multiple databases are configured and none has been chosen yet, the server asks you (via elicitation) which one to use. Relay the user's choice — do not guess.
+- **Add a new database:** Call `odoo_setup_credentials`. The newly added database becomes the active default.
+
+When the user's request is database-specific and the session db is ambiguous, confirm which database before reading or writing.
+""".strip()
+
+
+@mcp.prompt()
+def odoo_safety_policy() -> str:
+    """What this server will and will not do to Odoo."""
+    return """
+# Odoo safety policy
+
+This server is deliberately constrained:
+
+- **Reads are unrestricted** — search, read, count, and schema introspection are always available.
+- **Writes are gated** — create/update only via the 3-step write flow (`odoo_preview_write` → `odoo_validate_write` → `odoo_execute_approved_write`), each requiring explicit user approval, and only when writes are enabled — either persistently in the extension configuration or for the session via `odoo_enable_session_writes`.
+- **No deletes** — there is no delete/unlink capability. Do not promise to delete records; suggest archiving, or doing it manually in Odoo.
+- **No outbound communication** — the SafetyGuard blocks email-type messages and other outbound channels. Only internal chatter notes (`message_type='note'`) are permitted, via `odoo_log_internal_note`. Do not attempt to send customer-facing email through write tools; it will be rejected.
+
+If an operation is blocked, explain the constraint to the user rather than retrying.
+""".strip()
 
 
 class _DbChoice(BaseModel):
@@ -570,7 +658,7 @@ async def odoo_diagnose_call(input: OdooDiagnoseCallInput) -> dict[str, Any]:
 
 @mcp.tool(
     name="odoo_preview_write",
-    description="Dry-run step 1: create a canonical mutation draft (create/write/call) for human review; does not validate against live metadata and does not execute any Odoo call.",
+    description="Write flow step 1 of 3 — start here for any Odoo create/write/call. Builds a canonical payload draft for review. Does not validate against live schema and does not execute. Pass the returned payload to odoo_validate_write.",
     annotations={"title": "Preview Write", "readOnlyHint": True, "destructiveHint": False},
 )
 async def odoo_preview_write(input: OdooPreviewWriteInput) -> dict[str, Any]:
@@ -617,7 +705,7 @@ async def odoo_preview_write(input: OdooPreviewWriteInput) -> dict[str, Any]:
 
 @mcp.tool(
     name="odoo_validate_write",
-    description="Dry-run step 2: validate a mutation draft with SafetyGuard and live metadata checks where applicable, then issue a short-lived single-use approval token for explicit user approval in conversation; does not execute writes.",
+    description="Write flow step 2 of 3 — call after odoo_preview_write. Runs SafetyGuard and live schema checks, then issues a short-lived single-use approval token. Show the payload to the user and obtain explicit approval before proceeding to step 3. Does not execute.",
     annotations={"title": "Validate Write", "readOnlyHint": True, "destructiveHint": False},
 )
 async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> dict[str, Any] | str:
@@ -718,7 +806,7 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
 
 @mcp.tool(
     name="odoo_execute_approved_write",
-    description="Step 3 (execution): perform approved create/write/call only after explicit user approval and only when confirm=true, token is valid and unused, and ODOO_MCP_ENABLE_WRITES=1; otherwise fail closed.",
+    description="Write flow step 3 of 3 — call only after the user has explicitly approved the payload from step 2. Requires the approval_token from odoo_validate_write, confirm=true (set only with genuine user approval, never speculatively), and ODOO_MCP_ENABLE_WRITES=1 in the server environment. Fails closed on any unmet condition.",
     annotations={"title": "Execute Approved Write", "readOnlyHint": False, "destructiveHint": True},
 )
 async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx: Context) -> dict[str, Any] | str:
@@ -731,12 +819,18 @@ async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx:
             "error": "confirm must be true.",
         }
 
-    # Step 3 gate B: runtime env gate required for any mutating execution.
-    if not _truthy_env("ODOO_MCP_ENABLE_WRITES"):
+    # Step 3 gate B: runtime gate required for any mutating execution. Either the
+    # persistent env flag, or a consent-gated session enablement, must be on.
+    context: AppContext = ctx.request_context.lifespan_context
+    if not (_truthy_env("ODOO_MCP_ENABLE_WRITES") or context.session_writes):
         return {
             "success": False,
             "tool": "odoo_execute_approved_write",
-            "error": "Write execution is disabled. Set ODOO_MCP_ENABLE_WRITES=1.",
+            "error": (
+                "Write execution is disabled. Enable writes persistently via the extension "
+                "configuration ('Enable writes to Odoo'), or for this session only by calling "
+                "odoo_enable_session_writes."
+            ),
         }
 
     odoo = await _require_odoo(ctx)
@@ -978,13 +1072,76 @@ async def odoo_switch_database(input: OdooSwitchDatabaseInput, ctx: Context | No
     )
 
 
+class _SessionWriteConsent(BaseModel):
+    confirm: bool = Field(..., description="Set true to allow writes for this session")
+
+
+@mcp.tool(
+    name="odoo_enable_session_writes",
+    description=(
+        "Enable Odoo writes for the current session only — useful before a batch of approved "
+        "inserts or updates without restarting the extension. Asks the user for explicit consent "
+        "(it cannot be enabled silently). Stays on until the session ends or odoo_disable_session_writes "
+        "is called. Each individual write still requires the full 3-step approval flow."
+    ),
+    annotations={"title": "Enable Session Writes", "readOnlyHint": False, "destructiveHint": False},
+)
+async def odoo_enable_session_writes(ctx: Context) -> str:
+    """Tool: turn on writes for this session after explicit, human-confirmed consent."""
+    context: AppContext = ctx.request_context.lifespan_context
+    if _truthy_env("ODOO_MCP_ENABLE_WRITES"):
+        return "Writes are already enabled persistently via the extension configuration."
+    if context.session_writes:
+        return "Session writes are already enabled for this session."
+
+    try:
+        result = await ctx.elicit(
+            "Enable Odoo writes for THIS session only? Each individual write will still require the "
+            "3-step approval flow. This stays on until the extension restarts or you disable it.",
+            schema=_SessionWriteConsent,
+        )
+    except Exception:
+        return (
+            "This client does not support interactive confirmation, so session writes cannot be "
+            "enabled this way. Enable writes via Settings → Extensions → Odoo MCP Server → "
+            "'Enable writes to Odoo' instead, then restart the extension."
+        )
+
+    if result.action != "accept" or result.data is None or not result.data.confirm:
+        return "Session writes not enabled — no changes made."
+
+    context.session_writes = True
+    return (
+        "Session writes enabled for the duration of this session. Each write still goes through "
+        "odoo_preview_write → odoo_validate_write → odoo_execute_approved_write with explicit approval."
+    )
+
+
+@mcp.tool(
+    name="odoo_disable_session_writes",
+    description="Turn off writes that were enabled for the current session via odoo_enable_session_writes. Does not affect the persistent extension configuration.",
+    annotations={"title": "Disable Session Writes", "readOnlyHint": False, "destructiveHint": False},
+)
+async def odoo_disable_session_writes(ctx: Context) -> str:
+    """Tool: revoke session-level write enablement immediately."""
+    context: AppContext = ctx.request_context.lifespan_context
+    context.session_writes = False
+    if _truthy_env("ODOO_MCP_ENABLE_WRITES"):
+        return (
+            "Session writes turned off, but writes remain enabled persistently via the extension "
+            "configuration. To fully disable writes, turn off 'Enable writes to Odoo' and restart."
+        )
+    return "Session writes disabled. The server is now read-only for this session."
+
+
 @mcp.tool(
     name="odoo_runtime_info",
     description="Show runtime diagnostics: package version, server module path, and credential file status.",
     annotations={"title": "Odoo Runtime Diagnostics", "readOnlyHint": True, "destructiveHint": False},
 )
-async def odoo_runtime_info() -> dict[str, Any]:
+async def odoo_runtime_info(ctx: Context) -> dict[str, Any]:
     """Tool: help verify which plugin build/environment Claude is currently running."""
+    context: AppContext = ctx.request_context.lifespan_context
     try:
         package_version = metadata.version("odoo-mcp-server")
     except Exception:
@@ -1034,6 +1191,8 @@ async def odoo_runtime_info() -> dict[str, Any]:
         "json2_api_key_available": env_api_key_configured or stored_api_key_configured,
         "transport_compatibility_hints": compatibility_hints,
         "write_execution_enabled": _truthy_env("ODOO_MCP_ENABLE_WRITES"),
+        "session_writes_enabled": context.session_writes,
+        "writes_currently_allowed": _truthy_env("ODOO_MCP_ENABLE_WRITES") or context.session_writes,
         "self_update_enabled": _truthy_env("ODOO_MCP_ENABLE_SELF_UPDATE"),
     }
 

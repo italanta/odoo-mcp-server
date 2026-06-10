@@ -176,7 +176,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Returns a list of matching opportunities with key details:
         name, stage, expected revenue, closing date, salesperson, tags, and last activity.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         domain: list = [("type", "=", "opportunity")]
@@ -260,7 +260,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Returns complete opportunity data: all fields, log notes, messages, and scheduled activities.
         Use this to understand the full context of a deal before proposing updates.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         fields = [
@@ -349,7 +349,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         It returns a staged payload that must go through
         odoo_preview_write -> odoo_validate_write -> odoo_execute_approved_write.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
 
@@ -393,7 +393,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         SAFE: Log notes are internal-only and do not trigger outbound messages.
         Notes are the only direct mutation path.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         body = f"<p><strong>[{html.escape(params.source)}]</strong></p>{params.note}"
@@ -417,7 +417,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         It returns a staged payload that must go through
         odoo_preview_write -> odoo_validate_write -> odoo_execute_approved_write.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         type_map = {"todo": 4, "call": 2, "meeting": 3}
@@ -496,7 +496,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Searches across name, email, phone, and company name.
         Use to find existing contacts before proposing CRM updates.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         domain: list = [
@@ -543,7 +543,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Useful for understanding the current state of the pipeline and finding
         stale or stuck deals. Multi-company aware.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         stages = await odoo.search_read("crm.stage", [], ["name", "sequence"], order="sequence asc")

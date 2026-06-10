@@ -58,6 +58,10 @@ class OdooClient:
         self._uid: int | None = None
 
     @property
+    def db(self) -> str:
+        return self._creds.db
+
+    @property
     def transport_name(self) -> str:
         return self._transport.transport_name
 

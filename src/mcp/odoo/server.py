@@ -45,7 +45,14 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.mcp.odoo.connection.client import OdooClient
-from src.core.credentials import CONFIG_PATH, store_odoo_credentials_file, setup_advice
+from src.core.credentials import (
+    CONFIG_PATH,
+    store_odoo_credentials_file,
+    setup_advice,
+    list_databases,
+    get_default_db,
+    set_default_database,
+)
 from src.mcp.odoo.utils.diagnostics import diagnose_odoo_call
 from src.mcp.odoo.utils.safety import SafetyGuard, SafetyViolation
 from src.mcp.odoo.utils.update_manager import (
@@ -78,6 +85,7 @@ class AppContext:
 
     odoo: OdooClient | None
     auth_error: str | None = None
+    session_db: str | None = None  # db chosen for this session via elicitation or explicit switch
 
 
 @asynccontextmanager
@@ -86,20 +94,27 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
     Never crash on auth failure — store the error on AppContext so every
     tool can return it to Claude, who will relay the setup instruction.
+    If multiple databases are configured, defer connection until the first
+    tool call so we can elicit a choice from the user.
     """
     client: OdooClient | None = None
     auth_error: str | None = None
+    session_db: str | None = None
+    dbs = list_databases()
+    if len(dbs) == 1:
+        try:
+            client = OdooClient()
+            await client.authenticate()
+            session_db = client.db
+        except (RuntimeError, Exception) as exc:
+            auth_error = f"Odoo is not authenticated: {exc}"
+            client = None
+    elif len(dbs) == 0:
+        # No credentials at all — let odoo_setup_credentials handle it.
+        auth_error = None
+    # len(dbs) > 1: defer — _require_odoo will elicit the choice.
     try:
-        # Client construction can fail before authenticate() when the local
-        # credential file does not exist yet. Keep startup alive so Claude can
-        # still expose odoo_setup_credentials to the user.
-        client = OdooClient()
-        await client.authenticate()
-    except (RuntimeError, Exception) as exc:
-        auth_error = f"Odoo is not authenticated: {exc}"
-        client = None
-    try:
-        yield AppContext(odoo=client, auth_error=auth_error)
+        yield AppContext(odoo=client, auth_error=auth_error, session_db=session_db)
     finally:
         if client is not None:
             await client.close()
@@ -111,16 +126,58 @@ mcp = FastMCP(
 )
 
 
-def _odoo(ctx: Context) -> OdooClient | str:
-    """Extract the OdooClient from the lifespan context.
+class _DbChoice(BaseModel):
+    db: str = Field(..., description="Database name to use for this session")
 
-    Returns the client if authenticated, or an error string if auth failed.
-    Tools should check: if isinstance(result, str): return result
+
+async def _require_odoo(ctx: Context) -> OdooClient | str:
+    """Return the active OdooClient, eliciting a db choice if multiple are configured.
+
+    Returns the client, or an error string the tool should return directly.
     """
+    from src.core.credentials import get_odoo_credentials
+
     context: AppContext = ctx.request_context.lifespan_context
+
     if context.auth_error:
         return context.auth_error
-    return context.odoo
+    if context.odoo is not None:
+        return context.odoo
+
+    dbs = list_databases()
+    if not dbs:
+        return "No Odoo credentials configured. " + setup_advice()
+
+    if len(dbs) == 1:
+        db = dbs[0]
+    else:
+        try:
+            result = await ctx.elicit(
+                f"Multiple Odoo databases are configured: {', '.join(dbs)}. "
+                "Which one should I use for this session?",
+                schema=_DbChoice,
+            )
+        except Exception:
+            return (
+                f"Multiple Odoo databases are configured: {', '.join(dbs)}. "
+                "Use odoo_switch_database to select one."
+            )
+        if result.action != "accept" or result.data is None:
+            return "No database selected. Use odoo_switch_database to pick one."
+        db = result.data.db
+        if db not in dbs:
+            return f"Unknown database '{db}'. Available: {', '.join(dbs)}."
+
+    try:
+        creds = get_odoo_credentials(db)
+        client = OdooClient(credentials=creds)
+        await client.authenticate()
+    except Exception as exc:
+        return f"Failed to connect to database '{db}': {exc}"
+
+    context.odoo = client
+    context.session_db = db
+    return client
 
 
 # ── MCP Resources ──
@@ -129,7 +186,7 @@ def _odoo(ctx: Context) -> OdooClient | str:
 @mcp.resource("odoo://models", description="List all available models in the Odoo system")
 async def list_models(ctx: Context) -> str:
     """Resource: list all installed Odoo model names."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
     records = await odoo.search_read(
@@ -148,7 +205,7 @@ async def list_models(ctx: Context) -> str:
 )
 async def get_model_info(model_name: str, ctx: Context) -> str:
     """Resource: introspect a single Odoo model's metadata and fields."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
     model_info = await odoo.search_read(
@@ -240,9 +297,10 @@ class OdooScheduleActivityInput(BaseModel):
 )
 async def odoo_ping(ctx: Context) -> dict[str, Any] | str:
     """Tool: check Odoo connectivity and identity."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
+    await ctx.info(f"[db: {odoo.db}] ping")
     user = await odoo.get_current_user()
     return {
         "ok": True,
@@ -258,9 +316,10 @@ async def odoo_ping(ctx: Context) -> dict[str, Any] | str:
 )
 async def odoo_search_read(input: OdooSearchReadInput, ctx: Context) -> list[dict[str, Any]] | str:
     """Tool: perform Odoo search_read against any model with strict input validation."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
+    await ctx.info(f"[db: {odoo.db}] search_read {input.model}")
     fields = input.fields or None
     return await odoo.search_read(
         model=input.model,
@@ -279,9 +338,10 @@ async def odoo_search_read(input: OdooSearchReadInput, ctx: Context) -> list[dic
 )
 async def odoo_read_records(input: OdooGetRecordInput, ctx: Context) -> list[dict[str, Any]] | str:
     """Tool: read one or more records for a given model and ID list."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
+    await ctx.info(f"[db: {odoo.db}] read {input.model} ids={input.ids}")
     fields = input.fields or None
     return await odoo.read(model=input.model, ids=input.ids, fields=fields)
 
@@ -293,7 +353,7 @@ async def odoo_read_records(input: OdooGetRecordInput, ctx: Context) -> list[dic
 )
 async def odoo_log_internal_note(input: OdooLogNoteInput, ctx: Context) -> dict[str, Any] | str:
     """Tool: create a safe internal note on an Odoo record."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
     message_id = await odoo.log_note(model=input.model, record_id=input.record_id, body=input.body)
@@ -313,7 +373,7 @@ async def odoo_log_internal_note(input: OdooLogNoteInput, ctx: Context) -> dict[
 )
 async def odoo_schedule_activity(input: OdooScheduleActivityInput, ctx: Context) -> dict[str, Any] | str:
     """Tool: build an internal activity create payload for staged approval flow."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
 
@@ -470,9 +530,10 @@ class OdooApplySelfUpdateInput(BaseModel):
 )
 async def odoo_fields_get(input: OdooFieldsGetInput, ctx: Context) -> dict[str, Any] | str:
     """Tool: retrieve field metadata for a given Odoo model."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
+    await ctx.info(f"[db: {odoo.db}] fields_get {input.model}")
     return await odoo.fields_get(model=input.model, attributes=input.attributes)
 
 
@@ -483,9 +544,10 @@ async def odoo_fields_get(input: OdooFieldsGetInput, ctx: Context) -> dict[str, 
 )
 async def odoo_search_count(input: OdooSearchCountInput, ctx: Context) -> dict[str, Any] | str:
     """Tool: count records matching a domain filter."""
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
+    await ctx.info(f"[db: {odoo.db}] search_count {input.model}")
     count = await odoo.search_count(model=input.model, domain=input.domain)
     return {"model": input.model, "count": count}
 
@@ -598,7 +660,7 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
             "metadata_used": {"live_odoo": False},
         }
 
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
 
@@ -676,7 +738,7 @@ async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx:
             "error": "Write execution is disabled. Set ODOO_MCP_ENABLE_WRITES=1.",
         }
 
-    odoo = _odoo(ctx)
+    odoo = await _require_odoo(ctx)
     if isinstance(odoo, str):
         return odoo
 
@@ -771,9 +833,11 @@ class OdooSetupCredentialsInput(BaseModel):
 @mcp.tool(
     name="odoo_setup_credentials",
     description=(
-        "Save your personal Odoo credentials so Odoo tools can connect on your behalf. "
-        "Run this once. Credentials are stored in your user home directory (~/.config/odoo-mcp/) "
-        "and are only accessible to you. This tool requires an API key, not your login password. "
+        "Save Odoo credentials for a database so Odoo tools can connect on your behalf. "
+        "Can be run multiple times to add credentials for different databases — each database "
+        "is stored separately and the saved database becomes the active default. "
+        "Credentials are stored in ~/.config/odoo-mcp/ and are only accessible to you. "
+        "This tool requires an API key, not your login password. "
         "To generate an API key: go to Odoo Settings > "
         "Users > your profile > API Keys tab > New API Key."
     ),
@@ -837,10 +901,79 @@ async def odoo_setup_credentials(input: OdooSetupCredentialsInput, ctx: Context 
         if previous_client is not None and previous_client is not test_client:
             await previous_client.close()
 
+    all_dbs = list_databases()
     return (
-        f"Credentials saved for {test_creds.username}. "
-        "Odoo tools are now active for your account. "
-        "You only need to do this once — credentials persist across sessions."
+        f"Credentials saved for {test_creds.username} on database '{test_creds.db}'. "
+        f"Stored databases: {', '.join(all_dbs)}. "
+        "Odoo tools are now active. Credentials persist across sessions."
+    )
+
+
+class OdooSwitchDatabaseInput(BaseModel):
+    """Input schema for switching the active database."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    db: str = Field(..., description="Database name to switch to (must already be stored)")
+
+
+@mcp.tool(
+    name="odoo_list_databases",
+    description="List all Odoo databases that have stored credentials, and show which is currently active.",
+    annotations={"title": "List Odoo Databases", "readOnlyHint": True, "destructiveHint": False},
+)
+async def odoo_list_databases() -> dict[str, Any]:
+    """Tool: list stored Odoo databases and the current default."""
+    databases = list_databases()
+    default_db = get_default_db()
+    return {
+        "databases": databases,
+        "default_db": default_db,
+        "count": len(databases),
+    }
+
+
+@mcp.tool(
+    name="odoo_switch_database",
+    description=(
+        "Switch the active Odoo database. The selected database must already have stored credentials "
+        "(use odoo_list_databases to see available options, odoo_setup_credentials to add a new one)."
+    ),
+    annotations={"title": "Switch Odoo Database", "readOnlyHint": False, "destructiveHint": False},
+)
+async def odoo_switch_database(input: OdooSwitchDatabaseInput, ctx: Context | None = None) -> str:
+    """Tool: change the default database and reconnect the active session."""
+    try:
+        set_default_database(input.db)
+    except RuntimeError as exc:
+        return f"Error: {exc}"
+
+    if ctx is not None:
+        from src.core.credentials import get_odoo_credentials
+        try:
+            new_creds = get_odoo_credentials(input.db)
+        except RuntimeError as exc:
+            return f"Default updated but failed to load credentials: {exc}"
+
+        new_client = OdooClient(credentials=new_creds)
+        try:
+            await new_client.authenticate()
+        except Exception as exc:
+            await new_client.close()
+            return f"Switched default to '{input.db}' but authentication failed: {exc}"
+
+        context: AppContext = ctx.request_context.lifespan_context
+        previous_client = context.odoo
+        context.odoo = new_client
+        context.auth_error = None
+        context.session_db = input.db
+        if previous_client is not None and previous_client is not new_client:
+            await previous_client.close()
+
+    all_dbs = list_databases()
+    return (
+        f"Switched active database to '{input.db}'. "
+        f"Stored databases: {', '.join(all_dbs)}."
     )
 
 
@@ -860,11 +993,14 @@ async def odoo_runtime_info() -> dict[str, Any]:
     file_exists = config_path.exists()
     file_mode = None
     stored_api_key_configured = False
+    stored_databases: list[str] = []
+    stored_default_db: str | None = None
     if file_exists:
         file_mode = oct(config_path.stat().st_mode & 0o777)
         try:
-            stored_data = json.loads(config_path.read_text())
-            stored_api_key_configured = bool(str(stored_data.get("api_key", "")).strip())
+            stored_databases = list_databases()
+            stored_default_db = get_default_db()
+            stored_api_key_configured = len(stored_databases) > 0
         except Exception:
             stored_api_key_configured = False
 
@@ -889,6 +1025,8 @@ async def odoo_runtime_info() -> dict[str, Any]:
         "credentials_path": str(config_path),
         "credentials_file_exists": file_exists,
         "credentials_file_mode": file_mode,
+        "credentials_databases": stored_databases,
+        "credentials_default_db": stored_default_db,
         "odoo_transport": configured_transport,
         "json2_env_api_key_configured": env_api_key_configured,
         "json2_stored_api_key_configured": stored_api_key_configured,
@@ -990,13 +1128,10 @@ async def odoo_apply_self_update(input: OdooApplySelfUpdateInput) -> dict[str, A
 
 
 # ── Domain tool registration ──
-# Each module's register() adds its tools to the shared `mcp` instance,
-# reusing `_odoo` to access the single shared OdooClient.
-
 from src.mcp.odoo.tools import sales, projects  # noqa: E402
 
-sales.register(mcp, _odoo)
-projects.register(mcp, _odoo)
+sales.register(mcp, _require_odoo)
+projects.register(mcp, _require_odoo)
 
 
 def main() -> None:

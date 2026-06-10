@@ -126,7 +126,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Searches by name, client, status, project manager, and staleness.
         Multi-company aware. Returns project overview with status, client, and task count.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         domain: list = [("active", "=", True)]
@@ -209,7 +209,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Returns project metadata, status, timeline, and a task breakdown by stage.
         Use this to understand project health before proposing updates.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         fields = [
@@ -297,7 +297,7 @@ def register(mcp: FastMCP, get_odoo: Any) -> None:
         Find tasks by project, assignee, stage, overdue status, and staleness.
         Multi-company aware. Use to identify blockers, overdue work, and stale tasks.
         """
-        odoo = get_odoo(ctx)
+        odoo = await get_odoo(ctx)
         if isinstance(odoo, str):
             return odoo
         domain: list = []

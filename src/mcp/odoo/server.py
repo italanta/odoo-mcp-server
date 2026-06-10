@@ -304,6 +304,7 @@ async def odoo_ping(ctx: Context) -> dict[str, Any] | str:
     user = await odoo.get_current_user()
     return {
         "ok": True,
+        "db": odoo.db,
         "message": "Connected to Odoo successfully.",
         "user": user,
     }

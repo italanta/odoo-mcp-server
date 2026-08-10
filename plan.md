@@ -233,8 +233,10 @@ logging, traces, errors, onboarding state, or profile metadata.
 - [x] Fix static resource registration incompatible with SDK 2.
 - [ ] Keep process lifespan for shared infrastructure only; resolve principal,
   profile, credentials, and Odoo client per request.
-- [ ] Replace direct `ctx.elicit()` flows with MCP 2 `Resolve`/MRTR flows for
-  non-secret selection and exact confirmation.
+- [x] Remove direct `ctx.elicit()` flows; legacy local database selection now
+  requires an explicit durable default.
+- [ ] Add MCP 2 `Resolve`/MRTR flows for non-secret selection and exact
+  confirmation.
 - [x] Preserve stdio and add in-process SDK 2 contract tests in default and
   legacy compatibility modes.
 
@@ -367,6 +369,8 @@ stdio journeys pass before the major release is published.
   as `873fa9e`.
 - [x] Removed protocol-session write authority as `2123393` while preserving
   non-authorizing compatibility tool names.
+- [x] Removed the final direct elicitation path in favor of durable explicit
+  database selection as `a8fcd8f`.
 - [x] Current local result: 122 tests pass; Python error lint, generated-output
   drift, JSON/YAML syntax, wheel/sdist build, artifact-content inspection, and
   diff checks pass.

@@ -40,7 +40,7 @@ pip install odoo-mcp-server
 ### Via uv (fast Python installer)
 
 ```bash
-uvx --from https://github.com/italanta/odoo-mcp-server odoo-mcp-server
+uvx --from https://github.com/elewa-git/odoo-mcp-server odoo-mcp-server
 ```
 
 ## Setup
@@ -320,5 +320,5 @@ MIT Open Source
 ## Support
 
 For questions, issues, or feature requests:
-- GitHub Issues: https://github.com/italanta/odoo-mcp-server/issues
+- GitHub Issues: https://github.com/elewa-git/odoo-mcp-server/issues
 - Email: jente@elewa.ke

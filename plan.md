@@ -190,23 +190,23 @@ preview
 - [x] Commit this execution plan as the first branch checkpoint.
 - [x] Add a temporary v1 constraint `mcp>=1.28,<2` so the current application
   cannot accidentally install SDK 2 before the migration slice is ready.
-- [ ] Capture tool, resource, prompt, schema, safety, and transport behavior in
+- [x] Capture tool, resource, prompt, schema, safety, and transport behavior in
   contract tests.
 - [x] Establish a reproducible development environment and current test result.
-- [ ] Resolve the in-flight form-elicitation change by preserving its tests but
+- [x] Resolve the in-flight form-elicitation change by preserving its tests but
   replacing the secret-input boundary in the onboarding phase.
 
 Exit gate: the final v1-compatible baseline installs and its contract tests pass.
 
 ### Phase 1: Introduce portable identity and profile authorities
 
-- [ ] Add `Principal`, `OdooProfile`, and immutable credential-version types.
-- [ ] Add principal, profile, credential, onboarding, approval, and client-factory
+- [x] Add `Principal`, `OdooProfile`, and immutable credential-version types.
+- [x] Add principal, profile, credential, onboarding, approval, and client-factory
   protocols with unavailable/fail-closed adapters.
 - [ ] Move transport selection from process environment to validated profile.
-- [ ] Remove `ODOO_API_KEY` as a runtime override.
-- [ ] Make caches per client/profile/credential version.
-- [ ] Add local JSON metadata repository without moving secrets yet.
+- [x] Remove `ODOO_API_KEY` as a runtime override.
+- [x] Make caches per client/profile/credential version.
+- [x] Add local JSON metadata repository without moving secrets yet.
 
 Exit gate: two principals with identical profile labels and database names cannot
 read, select, cache, or execute with each other's state.
@@ -216,7 +216,7 @@ read, select, cache, or execute with each other's state.
 - [ ] Add a loopback-only onboarding endpoint with strict Host/Origin checks,
   authenticated single-use state, CSRF protection, short expiry, and no secret
   in URLs or logs.
-- [ ] Add a `getpass` CLI fallback for hosts without URL elicitation.
+- [x] Add a `getpass` CLI fallback for hosts without URL elicitation.
 - [ ] Add an OS credential-store provider and an explicitly selected owner-only
   file fallback for constrained plugin environments.
 - [ ] Add an idempotent legacy `credentials.json` migrator that authenticates
@@ -228,14 +228,14 @@ logging, traces, errors, onboarding state, or profile metadata.
 
 ### Phase 3: Port the server shell to MCP SDK 2
 
-- [ ] Pin MCP SDK 2.x and add `uv.lock`.
-- [ ] Rename `FastMCP` imports and types to `MCPServer`.
-- [ ] Fix static resource registration incompatible with SDK 2.
+- [x] Pin MCP SDK 2.x and add `uv.lock`.
+- [x] Rename `FastMCP` imports and types to `MCPServer`.
+- [x] Fix static resource registration incompatible with SDK 2.
 - [ ] Keep process lifespan for shared infrastructure only; resolve principal,
   profile, credentials, and Odoo client per request.
 - [ ] Replace direct `ctx.elicit()` flows with MCP 2 `Resolve`/MRTR flows for
   non-secret selection and exact confirmation.
-- [ ] Preserve stdio and add in-process SDK 2 contract tests in default and
+- [x] Preserve stdio and add in-process SDK 2 contract tests in default and
   legacy compatibility modes.
 
 Exit gate: SDK 2 lists the complete server surface and executes representative
@@ -243,9 +243,11 @@ read-only calls over stdio without session authority.
 
 ### Phase 4: Rebuild profile selection and write governance
 
+- [x] Remove protocol-session write authority; legacy enable/disable names are
+  non-authorizing compatibility aliases.
 - [ ] Replace database switching with durable default-profile selection and an
   explicit optional `profile_id` on profile-bound operations.
-- [ ] Replace in-memory approval maps with atomic local persistence.
+- [x] Replace in-memory approval maps with atomic local persistence.
 - [ ] Bind approval to principal, profile, credential version, canonical payload,
   expiry, and nonce.
 - [ ] Add MRTR accept/decline flows and fail closed when client capability is
@@ -293,23 +295,24 @@ explicit, tested migration notes.
 
 ### Phase 7: Cowork/OpenCrane and local packaging
 
-- [ ] Rewrite setup documentation around the primary remote Cowork/OpenCrane
+- [x] Rewrite setup documentation around the primary remote Cowork/OpenCrane
   connector and secondary local stdio journey.
-- [ ] Generate separate local-stdio artifacts and a remote connector descriptor.
-- [ ] Remove credential environment variables from distributed client configs.
-- [ ] Align package, manifest, plugin, runtime, and release versions and licenses.
-- [ ] Exclude bytecode, caches, local state, tests, credentials, and stale source
+- [x] Generate separate local-stdio artifacts and a remote connector descriptor.
+- [x] Remove credential environment variables from distributed client configs.
+- [x] Align package, manifest, plugin, runtime, and release versions and licenses.
+- [x] Exclude bytecode, caches, local state, tests, credentials, and stale source
   from release bundles.
-- [ ] Regenerate client configs and MCPB assets from authoritative inputs.
+- [ ] Regenerate the MCPB from authoritative inputs. Client configs are now
+  generated, committed, and checked for drift.
 
 Exit gate: the documented Cowork connector, OpenCrane integration, Claude
 Desktop extension, and manual local configurations match generated artifacts.
 
 ### Phase 8: CI, qualification, and release
 
-- [ ] Separate test/lint/package gates from publishing and restrict write
+- [x] Separate test/lint/package gates from publishing and restrict write
   permissions to release jobs.
-- [ ] Build and install clean wheel and sdist artifacts.
+- [x] Build clean wheel and sdist artifacts; clean-install verification remains.
 - [ ] Run Ruff, unit tests, generated-output checks, bundle inspection, secret
   scans, SDK protocol smoke tests, and checksum verification.
 - [ ] Qualify Odoo 18 XML-RPC and Odoo 19 JSON-2.
@@ -348,5 +351,22 @@ stdio journeys pass before the major release is published.
 - [x] Established the current baseline: 93 tests pass on Python 3.14.3. Focused
   Ruff checks pass for all new files; the repository has 76 pre-existing Ruff
   findings that remain outside these focused slices.
-- [ ] Complete the Phase 0 schema contract and replace the in-flight form-secret
-  elicitation before the SDK 2 cutover.
+- [x] Fixed PR merge-ref packaging and separated read-only package jobs from
+  write-authorized release publishing as `3f82708`.
+- [x] Added secret-free onboarding continuations as `4c0a5b7`.
+- [x] Isolated JSON-2 credentials and model caches per client as `65ed96d`.
+- [x] Cut the server and domain modules to official MCP SDK 2 as `614c832`.
+- [x] Added modern `2026-07-28` and legacy protocol client tests as `97b0de7`.
+- [x] Added atomic principal/profile/version/payload-bound SQLite approvals as
+  `db79301` and wired them into write execution as `eccc7df`.
+- [x] Added the secure local `getpass` onboarding command as `7a75e90`.
+- [x] Rewrote Cowork/OpenCrane and local onboarding documentation as `4624a3e`.
+- [x] Aligned the v2 package, manifest, plugin, local snippets, and remote
+  connector example as `ed6b58a`.
+- [x] Added test, lint, generation, wheel/sdist, and artifact inspection gates
+  as `873fa9e`.
+- [x] Removed protocol-session write authority as `2123393` while preserving
+  non-authorizing compatibility tool names.
+- [x] Current local result: 122 tests pass; Python error lint, generated-output
+  drift, JSON/YAML syntax, wheel/sdist build, artifact-content inspection, and
+  diff checks pass.

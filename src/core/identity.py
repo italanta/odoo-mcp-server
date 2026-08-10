@@ -57,3 +57,19 @@ class UnavailablePrincipalProvider:
 
     async def resolve(self) -> Principal:
         raise PrincipalUnavailableError("No trusted principal provider is configured.")
+
+
+class LocalInstallationPrincipalProvider:
+    """Bind stdio calls to the operating-system account running the process."""
+
+    def __init__(self, subject: str) -> None:
+        # The composition root supplies this from local process context. Tool
+        # arguments and MCP headers are deliberately not accepted here.
+        self._principal = Principal(
+            subject=subject,
+            issuer=None,
+            kind=PrincipalKind.LOCAL,
+        )
+
+    async def resolve(self) -> Principal:
+        return self._principal

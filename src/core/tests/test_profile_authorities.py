@@ -7,7 +7,7 @@ from src.core.credential_provider import (
     CredentialUnavailableError,
     UnavailableCredentialProvider,
 )
-from src.core.identity import Principal, PrincipalKind
+from src.core.identity import LocalInstallationPrincipalProvider, Principal, PrincipalKind
 from src.core.profiles import (
     InMemoryProfileRepository,
     OdooProfile,
@@ -49,6 +49,19 @@ def test_remote_principal_identity_includes_the_trusted_issuer() -> None:
     second = _principal("user-1", "https://issuer-b.example")
 
     assert first.id != second.id
+
+
+@pytest.mark.asyncio
+async def test_local_provider_resolves_only_its_process_bound_principal() -> None:
+    provider = LocalInstallationPrincipalProvider("local-user")
+
+    principal = await provider.resolve()
+
+    assert principal == Principal(
+        subject="local-user",
+        issuer=None,
+        kind=PrincipalKind.LOCAL,
+    )
 
 
 @pytest.mark.parametrize(

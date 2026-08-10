@@ -1,5 +1,7 @@
 """Compatibility contract for the public MCP surface during the v2 rewrite."""
 
+import json
+
 from src.mcp.odoo.server import mcp
 
 EXPECTED_TOOLS = {
@@ -39,7 +41,7 @@ EXPECTED_TOOLS = {
 }
 
 EXPECTED_RESOURCE_TEMPLATES = {
-    "odoo://models",
+    "odoo://models/{database}",
     "odoo://model/{model_name}",
 }
 
@@ -69,8 +71,23 @@ def test_write_execution_remains_destructive_and_validation_read_only() -> None:
     validate = tools["odoo_validate_write"].annotations
 
     assert execute is not None
-    assert execute.readOnlyHint is False
-    assert execute.destructiveHint is True
+    assert execute.read_only_hint is False
+    assert execute.destructive_hint is True
     assert validate is not None
-    assert validate.readOnlyHint is True
-    assert validate.destructiveHint is False
+    assert validate.read_only_hint is True
+    assert validate.destructive_hint is False
+
+
+def test_public_tool_contract_never_accepts_an_odoo_api_key() -> None:
+    """Keep downstream credentials outside every MCP tool input boundary."""
+    public_contract = [
+        {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+            "meta": tool.meta,
+        }
+        for tool in mcp._tool_manager.list_tools()
+    ]
+
+    assert "api_key" not in json.dumps(public_contract).casefold()

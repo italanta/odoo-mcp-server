@@ -15,8 +15,8 @@ Prompts (read automatically by the assistant):
 - ``odoo_safety_policy``      — What the server will and will not do.
 
 Resources:
-- ``odoo://models``              — List all available Odoo models.
-- ``odoo://model/{model_name}``  — Introspect a specific model's fields.
+- ``odoo://models/{database}``    — List models in an explicitly selected database.
+- ``odoo://model/{model_name}``   — Introspect a specific model's fields.
 
 Read tools:
 - ``odoo_ping``             — Validate connectivity and show authenticated user + active db.
@@ -54,23 +54,33 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import getpass
 import json
 import os
 from importlib import metadata
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date as _date
-from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.mcp.odoo.connection.client import OdooClient
+from src.mcp.odoo.connection.base_transport import transport_from_env
+from src.core.identity import (
+    LocalInstallationPrincipalProvider,
+    PrincipalProvider,
+    PrincipalUnavailableError,
+    UnavailablePrincipalProvider,
+)
+from src.core.onboarding import (
+    OnboardingProvider,
+    OnboardingUnavailableError,
+    UnavailableOnboardingProvider,
+)
 from src.core.credentials import (
-    CONFIG_PATH,
-    store_odoo_credentials_file,
     setup_advice,
     list_databases,
     get_default_db,
@@ -110,10 +120,12 @@ class AppContext:
     auth_error: str | None = None
     session_db: str | None = None  # db chosen for this session via elicitation or explicit switch
     session_writes: bool = False   # writes enabled for this session only via odoo_enable_session_writes
+    principal_provider: PrincipalProvider = field(default_factory=UnavailablePrincipalProvider)
+    onboarding_provider: OnboardingProvider = field(default_factory=UnavailableOnboardingProvider)
 
 
 @asynccontextmanager
-async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+async def app_lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
     """Initialize and share a single OdooClient for the server session.
 
     Never crash on auth failure — store the error on AppContext so every
@@ -138,13 +150,18 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         auth_error = None
     # len(dbs) > 1: defer — _require_odoo will elicit the choice.
     try:
-        yield AppContext(odoo=client, auth_error=auth_error, session_db=session_db)
+        yield AppContext(
+            odoo=client,
+            auth_error=auth_error,
+            session_db=session_db,
+            principal_provider=LocalInstallationPrincipalProvider(getpass.getuser()),
+        )
     finally:
         if client is not None:
             await client.close()
 
 
-mcp = FastMCP(
+mcp = MCPServer(
     "odoo_mcp",
     lifespan=app_lifespan,
 )
@@ -258,7 +275,7 @@ async def _require_odoo(ctx: Context) -> OdooClient | str:
 
     try:
         creds = get_odoo_credentials(db)
-        client = OdooClient(credentials=creds)
+        client = OdooClient(credentials=creds, transport=transport_from_env())
         await client.authenticate()
     except Exception as exc:
         return f"Failed to connect to database '{db}': {exc}"
@@ -271,20 +288,38 @@ async def _require_odoo(ctx: Context) -> OdooClient | str:
 # ── MCP Resources ──
 
 
-@mcp.resource("odoo://models", description="List all available models in the Odoo system")
-async def list_models(ctx: Context) -> str:
-    """Resource: list all installed Odoo model names."""
-    odoo = await _require_odoo(ctx)
-    if isinstance(odoo, str):
-        return odoo
-    records = await odoo.search_read(
-        "ir.model", [], fields=["model", "name"], limit=0
-    )
-    models = sorted(records, key=lambda r: r["model"])
-    return json.dumps(
-        {"count": len(models), "models": [{"model": r["model"], "name": r["name"]} for r in models]},
-        indent=2,
-    )
+@mcp.resource(
+    "odoo://models/{database}",
+    description="List all available models in one explicitly selected Odoo database",
+)
+async def list_models(database: str, ctx: Context) -> str:
+    """Resource: list installed model names without relying on prior session state."""
+    from src.core.credentials import get_odoo_credentials
+
+    try:
+        credentials = get_odoo_credentials(database)
+        odoo = OdooClient(credentials=credentials, transport=transport_from_env())
+        await odoo.authenticate()
+    except Exception as exc:
+        return json.dumps({"error": f"Failed to connect to database {database!r}: {exc}"})
+
+    try:
+        records = await odoo.search_read(
+            "ir.model", [], fields=["model", "name"], limit=0
+        )
+        models = sorted(records, key=lambda record: record["model"])
+        return json.dumps(
+            {
+                "count": len(models),
+                "models": [
+                    {"model": record["model"], "name": record["name"]}
+                    for record in models
+                ],
+            },
+            indent=2,
+        )
+    finally:
+        await odoo.close()
 
 
 @mcp.resource(
@@ -909,18 +944,15 @@ async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx:
 
 
 class OdooSetupCredentialsInput(BaseModel):
-    """Input schema for user credential setup."""
+    """Start a safe onboarding flow or inspect one previously started flow."""
 
     model_config = ConfigDict(extra="forbid")
 
-    url: str = Field(..., description="Odoo URL, e.g. https://my.odoo.com")
-    db: str = Field(..., description="Odoo database name")
-    username: str = Field(..., description="Your Odoo login email")
-    api_key: str = Field(
-        ...,
+    onboarding_id: str | None = Field(
+        default=None,
         description=(
-            "Your Odoo API key (Settings > Users > API Keys tab). "
-            "Do not use your Odoo account password."
+            "Opaque ID from a previous call. Omit to start onboarding; provide it "
+            "to inspect the non-secret completion status."
         ),
     )
 
@@ -928,80 +960,33 @@ class OdooSetupCredentialsInput(BaseModel):
 @mcp.tool(
     name="odoo_setup_credentials",
     description=(
-        "Save Odoo credentials for a database so Odoo tools can connect on your behalf. "
-        "Can be run multiple times to add credentials for different databases — each database "
-        "is stored separately and the saved database becomes the active default. "
-        "Credentials are stored in ~/.config/odoo-mcp/ and are only accessible to you. "
-        "This tool requires an API key, not your login password. "
-        "To generate an API key: go to Odoo Settings > "
-        "Users > your profile > API Keys tab > New API Key."
+        "Begin or inspect credential onboarding outside the MCP conversation. "
+        "The returned HTTPS or loopback URL is owned by the configured custody provider; "
+        "Odoo API keys must be entered there and never in tool arguments or form elicitation."
     ),
     annotations={"title": "Set Up Odoo Credentials", "readOnlyHint": False, "destructiveHint": False},
 )
-async def odoo_setup_credentials(input: OdooSetupCredentialsInput, ctx: Context | None = None) -> str:
-    """Tool: write per-user Odoo credentials to ~/.config/odoo-mcp/credentials.json.
-
-    Validates the credentials against Odoo before storing them.
-    Does not require an existing authenticated session.
-    """
-    import re
-
-    # Basic input validation
-    if not re.match(r"^https?://", input.url):
-        return "Error: URL must start with https:// (e.g. https://my.odoo.com)"
-    if "@" not in input.username:
-        return "Error: username must be an email address"
-    if not input.db.strip():
-        return "Error: database name is required"
-    if not input.api_key.strip():
-        return "Error: API key is required"
-
-    # Validate credentials against Odoo before storing
-    from src.core.credentials import OdooCredentials
-
-    test_creds = OdooCredentials(
-        url=input.url.rstrip("/"),
-        db=input.db.strip(),
-        username=input.username.strip(),
-        api_key=input.api_key.strip(),
-    )
-    test_client = OdooClient(credentials=test_creds)
-    authenticated = False
+async def odoo_setup_credentials(
+    input: OdooSetupCredentialsInput,
+    ctx: Context,
+) -> dict[str, str | None]:
+    """Start or inspect provider-owned onboarding without handling credentials."""
+    context: AppContext = ctx.request_context.lifespan_context
     try:
-        await test_client.authenticate()
-        authenticated = True
-    except Exception as exc:
-        return (
-            f"Credentials rejected by Odoo: {exc}. "
-            "Double-check your URL, database name, email, and API key."
-        )
-    finally:
-        if not authenticated:
-            await test_client.close()
+        principal = await context.principal_provider.resolve()
+        if input.onboarding_id is not None:
+            result = await context.onboarding_provider.get_result(
+                principal,
+                input.onboarding_id,
+            )
+            return result.to_public_dict()
 
-    store_odoo_credentials_file(
-        url=test_creds.url,
-        db=test_creds.db,
-        username=test_creds.username,
-        api_key=test_creds.api_key,
-    )
-
-    if ctx is not None:
-        # Refresh the in-memory app context immediately so the current Claude
-        # session can start using Odoo without requiring an extension restart.
-        context: AppContext = ctx.request_context.lifespan_context
-        previous_client = context.odoo
-        context.odoo = test_client
-        context.auth_error = None
-        if previous_client is not None and previous_client is not test_client:
-            await previous_client.close()
-
-    all_dbs = list_databases()
-    return (
-        f"Credentials saved for {test_creds.username} on database '{test_creds.db}'. "
-        f"Stored databases: {', '.join(all_dbs)}. "
-        "Odoo tools are now active. Credentials persist across sessions."
-    )
+        continuation = await context.onboarding_provider.begin(principal)
+        return continuation.to_public_dict()
+    except PrincipalUnavailableError:
+        return {"status": "unavailable", "failure_code": "identity_unavailable"}
+    except OnboardingUnavailableError:
+        return {"status": "unavailable", "failure_code": "onboarding_unavailable"}
 
 
 class OdooSwitchDatabaseInput(BaseModel):
@@ -1050,7 +1035,7 @@ async def odoo_switch_database(input: OdooSwitchDatabaseInput, ctx: Context | No
         except RuntimeError as exc:
             return f"Default updated but failed to load credentials: {exc}"
 
-        new_client = OdooClient(credentials=new_creds)
+        new_client = OdooClient(credentials=new_creds, transport=transport_from_env())
         try:
             await new_client.authenticate()
         except Exception as exc:
@@ -1140,34 +1125,18 @@ async def odoo_disable_session_writes(ctx: Context) -> str:
     annotations={"title": "Odoo Runtime Diagnostics", "readOnlyHint": True, "destructiveHint": False},
 )
 async def odoo_runtime_info(ctx: Context) -> dict[str, Any]:
-    """Tool: help verify which plugin build/environment Claude is currently running."""
+    """Tool: report bounded runtime state without inspecting credential material."""
     context: AppContext = ctx.request_context.lifespan_context
     try:
         package_version = metadata.version("odoo-mcp-server")
     except Exception:
         package_version = "unknown"
 
-    config_path = Path(CONFIG_PATH)
-    file_exists = config_path.exists()
-    file_mode = None
-    stored_api_key_configured = False
-    stored_databases: list[str] = []
-    stored_default_db: str | None = None
-    if file_exists:
-        file_mode = oct(config_path.stat().st_mode & 0o777)
-        try:
-            stored_databases = list_databases()
-            stored_default_db = get_default_db()
-            stored_api_key_configured = len(stored_databases) > 0
-        except Exception:
-            stored_api_key_configured = False
-
     configured_transport = os.environ.get("ODOO_TRANSPORT", "xmlrpc").strip().lower() or "xmlrpc"
-    env_api_key_configured = bool(os.environ.get("ODOO_API_KEY", "").strip())
     compatibility_hints: list[str] = []
     if configured_transport == "json2":
         compatibility_hints = [
-            "JSON-2 requires Odoo 19+ and an API key from ODOO_API_KEY or the stored credentials file.",
+            "JSON-2 requires Odoo 19+ and a credential lease from the configured custody provider.",
             "JSON-2 support covers core reads, internal note posting, and create/write mutations.",
         ]
     else:
@@ -1179,16 +1148,12 @@ async def odoo_runtime_info(ctx: Context) -> dict[str, Any]:
         "package": "odoo-mcp-server",
         "package_version": package_version,
         "server_module": __file__,
-        "credentials_backend": "file",
-        "credentials_path": str(config_path),
-        "credentials_file_exists": file_exists,
-        "credentials_file_mode": file_mode,
-        "credentials_databases": stored_databases,
-        "credentials_default_db": stored_default_db,
+        "credential_custody": "provider",
+        "credential_onboarding_available": not isinstance(
+            context.onboarding_provider,
+            UnavailableOnboardingProvider,
+        ),
         "odoo_transport": configured_transport,
-        "json2_env_api_key_configured": env_api_key_configured,
-        "json2_stored_api_key_configured": stored_api_key_configured,
-        "json2_api_key_available": env_api_key_configured or stored_api_key_configured,
         "transport_compatibility_hints": compatibility_hints,
         "write_execution_enabled": _truthy_env("ODOO_MCP_ENABLE_WRITES"),
         "session_writes_enabled": context.session_writes,

@@ -304,8 +304,8 @@ explicit, tested migration notes.
 - [x] Align package, manifest, plugin, runtime, and release versions and licenses.
 - [x] Exclude bytecode, caches, local state, tests, credentials, and stale source
   from release bundles.
-- [ ] Regenerate the MCPB from authoritative inputs. Client configs are now
-  generated, committed, and checked for drift.
+- [x] Regenerate client configs and the MCPB from authoritative inputs; keep the
+  binary MCPB as a CI/release artifact rather than source-controlled output.
 
 Exit gate: the documented Cowork connector, OpenCrane integration, Claude
 Desktop extension, and manual local configurations match generated artifacts.
@@ -314,7 +314,7 @@ Desktop extension, and manual local configurations match generated artifacts.
 
 - [x] Separate test/lint/package gates from publishing and restrict write
   permissions to release jobs.
-- [x] Build clean wheel and sdist artifacts; clean-install verification remains.
+- [x] Build and clean-install wheel and sdist artifacts.
 - [ ] Run Ruff, unit tests, generated-output checks, bundle inspection, secret
   scans, SDK protocol smoke tests, and checksum verification.
 - [ ] Qualify Odoo 18 XML-RPC and Odoo 19 JSON-2.
@@ -371,6 +371,10 @@ stdio journeys pass before the major release is published.
   non-authorizing compatibility tool names.
 - [x] Removed the final direct elicitation path in favor of durable explicit
   database selection as `a8fcd8f`.
-- [x] Current local result: 122 tests pass; Python error lint, generated-output
+- [x] Current local result: 116 tests pass after removing the superseded legacy
+  in-memory approval implementation and tests; Python error lint, generated-output
   drift, JSON/YAML syntax, wheel/sdist build, artifact-content inspection, and
   diff checks pass.
+- [x] Regenerated and validated the MCPB with the official CLI; the manifest
+  schema passes and inspection confirms no tests, caches, virtualenvs,
+  credentials, local paths, internal agent instructions, or stale approval code.

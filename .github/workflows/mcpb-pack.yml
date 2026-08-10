@@ -78,7 +78,7 @@ jobs:
 
       - name: Inspect MCPB file list
         run: |
-          if unzip -l ./*.mcpb | grep -E '(\.git/|\.venv[^/]*/|__pycache__/|\.pyc|/tests/|credentials\.json|/dist/)'; then
+          if unzip -l ./*.mcpb | grep -E '(\.git/|\.venv[^/]*/|__pycache__/|\.pyc|/tests/|credentials\.json|/dist/|AGENTS\.md|write_approvals\.py)'; then
             echo "MCPB contains repository, environment, test, credential, or generated-state files."
             exit 1
           fi

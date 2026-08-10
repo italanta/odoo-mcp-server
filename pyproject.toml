@@ -31,6 +31,7 @@ dev = [
 
 [project.scripts]
 odoo-mcp-server = "src.mcp.odoo.server:main"
+odoo-mcp-onboard = "src.core.local_onboarding:main"
 
 [tool.ruff]
 target-version = "py311"

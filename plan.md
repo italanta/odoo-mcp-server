@@ -187,12 +187,12 @@ preview
 
 ### Phase 0: Stabilize and capture the contract
 
-- [ ] Commit this execution plan as the first branch checkpoint.
-- [ ] Add a temporary v1 constraint `mcp>=1.28,<2` so the current application
+- [x] Commit this execution plan as the first branch checkpoint.
+- [x] Add a temporary v1 constraint `mcp>=1.28,<2` so the current application
   cannot accidentally install SDK 2 before the migration slice is ready.
 - [ ] Capture tool, resource, prompt, schema, safety, and transport behavior in
   contract tests.
-- [ ] Establish a reproducible development environment and current test result.
+- [x] Establish a reproducible development environment and current test result.
 - [ ] Resolve the in-flight form-elicitation change by preserving its tests but
   replacing the secret-input boundary in the onboarding phase.
 
@@ -339,5 +339,14 @@ stdio journeys pass before the major release is published.
   worktree changes.
 - [x] Replaced the stale platform-breadth plan with this MCP 2.0 and onboarding
   execution plan.
-- [ ] Commit the plan checkpoint.
-- [ ] Start Phase 0 compatibility and contract capture.
+- [x] Committed the plan checkpoint as `00b9bf8`.
+- [x] Added the temporary v1 dependency fence and lockfile as `4401988`.
+- [x] Froze the current public names and write annotations as `3f5d868`.
+- [x] Added principal/profile/credential contracts as `407cd37`.
+- [x] Added the profile-bound Odoo client factory as `c7417ad`.
+- [x] Added owner-only non-secret profile persistence as `aa946bb`.
+- [x] Established the current baseline: 93 tests pass on Python 3.14.3. Focused
+  Ruff checks pass for all new files; the repository has 76 pre-existing Ruff
+  findings that remain outside these focused slices.
+- [ ] Complete the Phase 0 schema contract and replace the in-flight form-secret
+  elicitation before the SDK 2 cutover.

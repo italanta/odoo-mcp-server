@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  # Packaging and pull-request validation must not receive release authority.
+  contents: read
 
 jobs:
   pack:
@@ -34,7 +35,10 @@ jobs:
 
       - name: Build release bundle archive
         run: |
+          # Pull-request merge refs contain a slash (for example, "123/merge").
+          # Keep the archive name portable and confined to the dist directory.
           VERSION="${GITHUB_REF_NAME:-${GITHUB_SHA::7}}"
+          VERSION="${VERSION//\//-}"
           BUNDLE_NAME="odoo-mcp-server-${VERSION}-bundle"
 
           mkdir -p dist/release
@@ -64,6 +68,33 @@ jobs:
             dist/*.zip
             dist/*.sha256
 
+  release:
+    # Releases run separately so pull-request jobs retain read-only contents access.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+    needs: pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download MCPB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: odoo-mcp-server-mcpb
+          path: release/mcpb
+
+      - name: Download client config artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: odoo-mcp-server-client-configs
+          path: release/client-configs
+
+      - name: Download release bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: odoo-mcp-server-release-bundle
+          path: release/dist
+
       - name: Publish rolling prerelease (main)
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
@@ -74,10 +105,10 @@ jobs:
           make_latest: false
           target_commitish: ${{ github.sha }}
           files: |
-            ./*.mcpb
-            dist/client-configs/*
-            dist/*.zip
-            dist/*.sha256
+            release/mcpb/*.mcpb
+            release/client-configs/*
+            release/dist/*.zip
+            release/dist/*.sha256
 
       - name: Create versioned release (tag push)
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -89,7 +120,7 @@ jobs:
           make_latest: true
           generate_release_notes: true
           files: |
-            ./*.mcpb
-            dist/client-configs/*
-            dist/*.zip
-            dist/*.sha256
+            release/mcpb/*.mcpb
+            release/client-configs/*
+            release/dist/*.zip
+            release/dist/*.sha256

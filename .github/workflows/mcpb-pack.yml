@@ -48,6 +48,12 @@ jobs:
       - name: Build Python artifacts
         run: uv build
 
+      - name: Install and import the clean wheel
+        run: |
+          uv venv .venv-artifact
+          uv pip install --python .venv-artifact/bin/python dist/*.whl
+          .venv-artifact/bin/python -c "from src.mcp.odoo.server import mcp; assert mcp.name == 'odoo_mcp'"
+
       - name: Inspect Python artifact contents
         run: |
           if unzip -l dist/*.whl | grep -E 'tests/|__pycache__|\.pyc'; then
@@ -69,6 +75,13 @@ jobs:
 
       - name: Validate and pack bundle
         run: mcpb pack
+
+      - name: Inspect MCPB file list
+        run: |
+          if unzip -l ./*.mcpb | grep -E '(\.git/|\.venv[^/]*/|__pycache__/|\.pyc|/tests/|credentials\.json|/dist/)'; then
+            echo "MCPB contains repository, environment, test, credential, or generated-state files."
+            exit 1
+          fi
 
       - name: Inspect artifacts for local paths and credential configuration
         run: |

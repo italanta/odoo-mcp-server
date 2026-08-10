@@ -315,7 +315,7 @@ Desktop extension, and manual local configurations match generated artifacts.
 - [x] Separate test/lint/package gates from publishing and restrict write
   permissions to release jobs.
 - [x] Build and clean-install wheel and sdist artifacts.
-- [ ] Run Ruff, unit tests, generated-output checks, bundle inspection, secret
+- [x] Run Ruff, unit tests, generated-output checks, bundle inspection, secret
   scans, SDK protocol smoke tests, and checksum verification.
 - [ ] Qualify Odoo 18 XML-RPC and Odoo 19 JSON-2.
 - [ ] Qualify Cowork OAuth, first-use onboarding, multiple profiles, read-only
@@ -378,3 +378,6 @@ stdio journeys pass before the major release is published.
 - [x] Regenerated and validated the MCPB with the official CLI; the manifest
   schema passes and inspection confirms no tests, caches, virtualenvs,
   credentials, local paths, internal agent instructions, or stale approval code.
+- [x] Live PR package run `31376295899` passed the locked install, test, lint,
+  generation, clean-install, artifact inspection, MCPB validation, archive, and
+  upload gates; checksum verification is added to the same required job.

@@ -107,6 +107,7 @@ jobs:
 
           (cd dist/release && zip -r "../${BUNDLE_NAME}.zip" .)
           sha256sum "dist/${BUNDLE_NAME}.zip" > "dist/${BUNDLE_NAME}.zip.sha256"
+          sha256sum --check "dist/${BUNDLE_NAME}.zip.sha256"
 
       - name: Upload MCPB artifact
         uses: actions/upload-artifact@v4

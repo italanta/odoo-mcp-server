@@ -33,18 +33,16 @@ Write tools (3-step, approval-gated, fail-closed):
 - ``odoo_log_internal_note``      — Post chatter notes with ``message_type='note'`` only.
 - ``odoo_schedule_activity``      — Create internal reminder activities.
 
-Writes are off by default and gated two ways: the ``ODOO_MCP_ENABLE_WRITES``
-environment flag (set via the extension's "Enable writes to Odoo" config), or
-``odoo_enable_session_writes`` which turns writes on for the current session only
-after explicit user consent — useful for batch inserts/updates without a restart.
+Writes are off by default and require the ``ODOO_MCP_ENABLE_WRITES`` server
+policy flag plus a durable exact approval. Protocol sessions never grant authority.
 Deletes and outbound email are never permitted.
 
 Database & session tools:
 - ``odoo_setup_credentials``      — Add/update credentials for a database.
 - ``odoo_list_databases``         — List stored databases and the default.
 - ``odoo_switch_database``        — Switch the active database for the session.
-- ``odoo_enable_session_writes``  — Enable writes for this session (consent-gated).
-- ``odoo_disable_session_writes`` — Turn session writes back off.
+- ``odoo_enable_session_writes``  — Deprecated compatibility alias; never grants authority.
+- ``odoo_disable_session_writes`` — Deprecated compatibility alias; no session state exists.
 - ``odoo_runtime_info``           — Runtime diagnostics and write status.
 
 Run:
@@ -121,7 +119,6 @@ class AppContext:
     odoo: OdooClient | None
     auth_error: str | None = None
     session_db: str | None = None  # db chosen for this session via elicitation or explicit switch
-    session_writes: bool = False   # writes enabled for this session only via odoo_enable_session_writes
     principal_provider: PrincipalProvider = field(default_factory=UnavailablePrincipalProvider)
     onboarding_provider: OnboardingProvider = field(default_factory=UnavailableOnboardingProvider)
     approval_repository: ApprovalRepository = field(default_factory=UnavailableApprovalRepository)
@@ -195,9 +192,8 @@ Writes must also be enabled in the extension configuration; if not, execution fa
 
 ## Important
 - Approval tokens expire and are single-use. If a token expires before step 3, restart from step 1.
-- If `writes_currently_allowed: false` appears in `odoo_runtime_info`, writes are off. Two ways to enable:
-  - **Persistent:** open Claude Settings → Extensions → Odoo MCP Server → configuration, turn on "Enable writes to Odoo", and restart the extension (sets `ODOO_MCP_ENABLE_WRITES=1`).
-  - **This session only (good for batch inserts/updates):** call `odoo_enable_session_writes`. The user must confirm; no restart needed. Turn it back off with `odoo_disable_session_writes`.
+- If `writes_currently_allowed: false` appears in `odoo_runtime_info`, writes are off.
+  An administrator must enable the server policy gate; a protocol session cannot do so.
 """.strip()
 
 
@@ -228,7 +224,7 @@ def odoo_safety_policy() -> str:
 This server is deliberately constrained:
 
 - **Reads are unrestricted** — search, read, count, and schema introspection are always available.
-- **Writes are gated** — create/update only via the 3-step write flow (`odoo_preview_write` → `odoo_validate_write` → `odoo_execute_approved_write`), each requiring explicit user approval, and only when writes are enabled — either persistently in the extension configuration or for the session via `odoo_enable_session_writes`.
+- **Writes are gated** — create/update only via the 3-step write flow (`odoo_preview_write` → `odoo_validate_write` → `odoo_execute_approved_write`), each requiring explicit user approval and the server policy gate. Protocol sessions never enable writes.
 - **No deletes** — there is no delete/unlink capability. Do not promise to delete records; suggest archiving, or doing it manually in Odoo.
 - **No outbound communication** — the SafetyGuard blocks email-type messages and other outbound channels. Only internal chatter notes (`message_type='note'`) are permitted, via `odoo_log_internal_note`. Do not attempt to send customer-facing email through write tools; it will be rejected.
 
@@ -885,17 +881,16 @@ async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx:
             "error": "confirm must be true.",
         }
 
-    # Step 3 gate B: runtime gate required for any mutating execution. Either the
-    # persistent env flag, or a consent-gated session enablement, must be on.
+    # Step 3 gate B: a server policy gate is required for any mutating
+    # execution. Protocol sessions cannot create or retain write authority.
     context: AppContext = ctx.request_context.lifespan_context
-    if not (_truthy_env("ODOO_MCP_ENABLE_WRITES") or context.session_writes):
+    if not _truthy_env("ODOO_MCP_ENABLE_WRITES"):
         return {
             "success": False,
             "tool": "odoo_execute_approved_write",
             "error": (
-                "Write execution is disabled. Enable writes persistently via the extension "
-                "configuration ('Enable writes to Odoo'), or for this session only by calling "
-                "odoo_enable_session_writes."
+                "Write execution is disabled by server policy. An administrator must enable "
+                "the ODOO_MCP_ENABLE_WRITES gate. Protocol sessions cannot enable it."
             ),
         }
 
@@ -1086,66 +1081,33 @@ async def odoo_switch_database(input: OdooSwitchDatabaseInput, ctx: Context | No
     )
 
 
-class _SessionWriteConsent(BaseModel):
-    confirm: bool = Field(..., description="Set true to allow writes for this session")
-
-
 @mcp.tool(
     name="odoo_enable_session_writes",
     description=(
-        "Enable Odoo writes for the current session only — useful before a batch of approved "
-        "inserts or updates without restarting the extension. Asks the user for explicit consent "
-        "(it cannot be enabled silently). Stays on until the session ends or odoo_disable_session_writes "
-        "is called. Each individual write still requires the full 3-step approval flow."
+        "Deprecated compatibility alias. MCP protocol sessions are not an authority boundary, "
+        "so this tool never enables writes. Use the server policy gate and exact approval flow."
     ),
     annotations={"title": "Enable Session Writes", "readOnlyHint": False, "destructiveHint": False},
 )
-async def odoo_enable_session_writes(ctx: Context) -> str:
-    """Tool: turn on writes for this session after explicit, human-confirmed consent."""
-    context: AppContext = ctx.request_context.lifespan_context
-    if _truthy_env("ODOO_MCP_ENABLE_WRITES"):
-        return "Writes are already enabled persistently via the extension configuration."
-    if context.session_writes:
-        return "Session writes are already enabled for this session."
-
-    try:
-        result = await ctx.elicit(
-            "Enable Odoo writes for THIS session only? Each individual write will still require the "
-            "3-step approval flow. This stays on until the extension restarts or you disable it.",
-            schema=_SessionWriteConsent,
-        )
-    except Exception:
-        return (
-            "This client does not support interactive confirmation, so session writes cannot be "
-            "enabled this way. Enable writes via Settings → Extensions → Odoo MCP Server → "
-            "'Enable writes to Odoo' instead, then restart the extension."
-        )
-
-    if result.action != "accept" or result.data is None or not result.data.confirm:
-        return "Session writes not enabled — no changes made."
-
-    context.session_writes = True
+async def odoo_enable_session_writes() -> str:
+    """Compatibility tool that deliberately cannot create session authority."""
     return (
-        "Session writes enabled for the duration of this session. Each write still goes through "
-        "odoo_preview_write → odoo_validate_write → odoo_execute_approved_write with explicit approval."
+        "Session write enablement was removed in MCP 2. Protocol sessions cannot grant write authority. "
+        "Use the administrator-controlled server policy gate and exact durable approval flow."
     )
 
 
 @mcp.tool(
     name="odoo_disable_session_writes",
-    description="Turn off writes that were enabled for the current session via odoo_enable_session_writes. Does not affect the persistent extension configuration.",
+    description=(
+        "Deprecated compatibility alias. MCP 2 keeps no session write authority, "
+        "so this tool performs no state change."
+    ),
     annotations={"title": "Disable Session Writes", "readOnlyHint": False, "destructiveHint": False},
 )
-async def odoo_disable_session_writes(ctx: Context) -> str:
-    """Tool: revoke session-level write enablement immediately."""
-    context: AppContext = ctx.request_context.lifespan_context
-    context.session_writes = False
-    if _truthy_env("ODOO_MCP_ENABLE_WRITES"):
-        return (
-            "Session writes turned off, but writes remain enabled persistently via the extension "
-            "configuration. To fully disable writes, turn off 'Enable writes to Odoo' and restart."
-        )
-    return "Session writes disabled. The server is now read-only for this session."
+async def odoo_disable_session_writes() -> str:
+    """Compatibility tool for clients that still call the removed session API."""
+    return "No session write authority exists in MCP 2; no state change was necessary."
 
 
 @mcp.tool(
@@ -1185,8 +1147,7 @@ async def odoo_runtime_info(ctx: Context) -> dict[str, Any]:
         "odoo_transport": configured_transport,
         "transport_compatibility_hints": compatibility_hints,
         "write_execution_enabled": _truthy_env("ODOO_MCP_ENABLE_WRITES"),
-        "session_writes_enabled": context.session_writes,
-        "writes_currently_allowed": _truthy_env("ODOO_MCP_ENABLE_WRITES") or context.session_writes,
+        "writes_currently_allowed": _truthy_env("ODOO_MCP_ENABLE_WRITES"),
         "self_update_enabled": _truthy_env("ODOO_MCP_ENABLE_SELF_UPDATE"),
     }
 

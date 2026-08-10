@@ -70,6 +70,7 @@ class TestRuntimeInfo:
         assert info["credential_onboarding_available"] is False
         assert "api_key" not in serialized.casefold()
         assert "must-not-be-observed" not in serialized
+        assert "session_writes" not in serialized
 
     @pytest.mark.asyncio
     async def test_runtime_info_reports_provider_onboarding_availability(self):
@@ -120,3 +121,15 @@ class TestRuntimeInfo:
             "status": "unavailable",
             "failure_code": "onboarding_unavailable",
         }
+
+    @pytest.mark.asyncio
+    async def test_legacy_session_write_tools_never_grant_authority(self, monkeypatch):
+        monkeypatch.delenv("ODOO_MCP_ENABLE_WRITES", raising=False)
+
+        enable_result = await server.odoo_enable_session_writes()
+        disable_result = await server.odoo_disable_session_writes()
+        info = await server.odoo_runtime_info(_context())
+
+        assert "cannot grant write authority" in enable_result
+        assert "no state change" in disable_result
+        assert info["writes_currently_allowed"] is False

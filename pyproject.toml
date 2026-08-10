@@ -47,6 +47,13 @@ testpaths = ["tests", "src/core/tests", "src/mcp/odoo/tests"]
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
+[tool.hatch.build]
+exclude = [
+    "**/__pycache__/**",
+    "**/tests/**",
+    "**/*.pyc",
+]
+
 [tool.hatch.build.targets.sdist]
 include = [
     "src/**",

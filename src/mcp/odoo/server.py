@@ -61,12 +61,18 @@ from importlib import metadata
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date as _date
+from datetime import UTC, date as _date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src.core.approvals import (
+    ApprovalRepository,
+    ApprovalRepositoryError,
+    UnavailableApprovalRepository,
+)
 from src.mcp.odoo.connection.client import OdooClient
 from src.mcp.odoo.connection.base_transport import transport_from_env
 from src.core.identity import (
@@ -80,6 +86,7 @@ from src.core.onboarding import (
     OnboardingUnavailableError,
     UnavailableOnboardingProvider,
 )
+from src.core.sqlite_approval_repository import SqliteApprovalRepository
 from src.core.credentials import (
     setup_advice,
     list_databases,
@@ -95,12 +102,7 @@ from src.mcp.odoo.utils.update_manager import (
     default_repo,
     fetch_latest_release_or_tag,
 )
-from src.mcp.odoo.utils.write_approvals import ApprovalStore
-
-
-_approval_store = ApprovalStore(ttl_seconds=600)
-# Token -> validated payload map kept in process memory for same-session execution.
-_validated_payloads: dict[str, dict[str, Any]] = {}
+APPROVAL_PATH = Path.home() / ".config" / "odoo-mcp" / "approvals.sqlite3"
 
 
 def _truthy_env(name: str) -> bool:
@@ -122,6 +124,7 @@ class AppContext:
     session_writes: bool = False   # writes enabled for this session only via odoo_enable_session_writes
     principal_provider: PrincipalProvider = field(default_factory=UnavailablePrincipalProvider)
     onboarding_provider: OnboardingProvider = field(default_factory=UnavailableOnboardingProvider)
+    approval_repository: ApprovalRepository = field(default_factory=UnavailableApprovalRepository)
 
 
 @asynccontextmanager
@@ -155,6 +158,7 @@ async def app_lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
             auth_error=auth_error,
             session_db=session_db,
             principal_provider=LocalInstallationPrincipalProvider(getpass.getuser()),
+            approval_repository=SqliteApprovalRepository(APPROVAL_PATH),
         )
     finally:
         if client is not None:
@@ -184,7 +188,8 @@ Pass the payload from step 1. Runs safety checks and live schema validation agai
 On success returns an `approval.token` (short-lived, single-use). **Show the payload to the user and ask for explicit approval before proceeding.**
 
 ## Step 3 — Execute: `odoo_execute_approved_write`
-Pass the `approval_token` from step 2 and set `confirm=true`. This is the only step that writes to Odoo.
+Pass the `approval_token` and exact validated `payload` from step 2, then set `confirm=true`.
+This is the only step that writes to Odoo.
 `confirm=true` must reflect genuine user approval — never set it speculatively.
 Writes must also be enabled in the extension configuration; if not, execution fails with a clear error.
 
@@ -612,7 +617,26 @@ class OdooExecuteApprovedWriteInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     approval_token: str = Field(..., description="Token returned by odoo_validate_write")
+    payload: OdooValidateWriteInput = Field(
+        ...,
+        description="Exact validated payload shown to and approved by the user",
+    )
     confirm: bool = Field(..., description="Must be true to execute")
+
+
+def _canonical_write_payload(
+    input: OdooPreviewWriteInput | OdooValidateWriteInput,
+) -> dict[str, Any]:
+    """Build the one payload shape shared by preview, approval, and execution."""
+    return {
+        "model": input.model,
+        "operation": input.operation.strip().lower(),
+        "record_ids": input.record_ids,
+        "values": input.values,
+        "method": input.method,
+        "args": input.args,
+        "kwargs": input.kwargs,
+    }
 
 
 class OdooCheckForUpdateInput(BaseModel):
@@ -721,15 +745,7 @@ async def odoo_preview_write(input: OdooPreviewWriteInput) -> dict[str, Any]:
             "error": "method is required for call operations.",
         }
 
-    payload = {
-        "model": input.model,
-        "operation": operation,
-        "record_ids": input.record_ids,
-        "values": input.values,
-        "method": input.method,
-        "args": input.args,
-        "kwargs": input.kwargs,
-    }
+    payload = _canonical_write_payload(input)
     return {
         "success": True,
         "tool": "odoo_preview_write",
@@ -814,34 +830,49 @@ async def odoo_validate_write(input: OdooValidateWriteInput, ctx: Context) -> di
             "field_count": len(field_meta),
         }
 
-    payload = {
-        "model": input.model,
-        "operation": operation,
-        "record_ids": input.record_ids,
-        "values": input.values,
-        "method": input.method,
-        "args": input.args,
-        "kwargs": input.kwargs,
-    }
-    # Register short-lived single-use approval token bound to exact validated payload.
-    approval = _approval_store.register(payload)
-    _validated_payloads[approval.token] = payload
+    payload = _canonical_write_payload(input)
+    context: AppContext = ctx.request_context.lifespan_context
+    try:
+        principal = await context.principal_provider.resolve()
+        profile_id = context.session_db or odoo.db
+        # Legacy local credentials have no rotation metadata. Version 1 is an
+        # explicit migration fence until every call resolves an OdooProfile.
+        approval = await context.approval_repository.issue(
+            principal_id=principal.id,
+            profile_id=profile_id,
+            credential_version=1,
+            payload=payload,
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+    except (PrincipalUnavailableError, ApprovalRepositoryError):
+        return {
+            "success": False,
+            "tool": "odoo_validate_write",
+            "error": "Write approval authority is unavailable.",
+        }
     return {
         "success": True,
         "tool": "odoo_validate_write",
         "approval": {
             "token": approval.token,
-            "expires_at": approval.expires_at,
+            "expires_at": approval.expires_at.isoformat(),
             "requires_confirm": True,
         },
         "metadata_used": metadata_used,
-        "next": "Run odoo_execute_approved_write with approval_token and confirm=true.",
+        "next": (
+            "Run odoo_execute_approved_write with approval_token, this exact payload, "
+            "and confirm=true."
+        ),
     }
 
 
 @mcp.tool(
     name="odoo_execute_approved_write",
-    description="Write flow step 3 of 3 — call only after the user has explicitly approved the payload from step 2. Requires the approval_token from odoo_validate_write, confirm=true (set only with genuine user approval, never speculatively), and ODOO_MCP_ENABLE_WRITES=1 in the server environment. Fails closed on any unmet condition.",
+    description=(
+        "Write flow step 3 of 3 — call only after the user explicitly approves the payload from step 2. "
+        "Requires the approval_token, the exact validated payload, confirm=true, and the server write gate. "
+        "Fails closed on any mismatch, replay, expiry, or unavailable authority."
+    ),
     annotations={"title": "Execute Approved Write", "readOnlyHint": False, "destructiveHint": True},
 )
 async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx: Context) -> dict[str, Any] | str:
@@ -872,27 +903,25 @@ async def odoo_execute_approved_write(input: OdooExecuteApprovedWriteInput, ctx:
     if isinstance(odoo, str):
         return odoo
 
-    # Lookup the payload bound to this token during validation.
-    token = input.approval_token
-    payload = _validated_payloads.get(token)
-    if payload is None:
-        return {
-            "success": False,
-            "tool": "odoo_execute_approved_write",
-            "error": "Unknown approval token. Run odoo_validate_write first.",
-        }
-
-    # Step 3 gate C: token must be valid, unexpired, unused, and payload-matching.
+    # Step 3 gate C: atomically reserve an exact principal/profile/payload
+    # approval. No process-local map or protocol session grants authority.
+    payload = _canonical_write_payload(input.payload)
     try:
-        _approval_store.consume(token, payload)
-    except Exception:
+        principal = await context.principal_provider.resolve()
+        profile_id = context.session_db or odoo.db
+        await context.approval_repository.reserve(
+            input.approval_token,
+            principal_id=principal.id,
+            profile_id=profile_id,
+            credential_version=1,
+            payload=payload,
+        )
+    except (PrincipalUnavailableError, ApprovalRepositoryError):
         return {
             "success": False,
             "tool": "odoo_execute_approved_write",
             "error": "Approval token invalid, expired, already used, or does not match payload.",
         }
-    # Drop payload binding after token use to preserve single-use semantics.
-    _validated_payloads.pop(token, None)
 
     # Only validated operations are executable, with operation-specific execution path.
     operation = payload["operation"]

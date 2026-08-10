@@ -140,6 +140,32 @@ class ApprovalRepository(Protocol):
         """Atomically reserve an unexpired approval for its exact binding."""
 
 
+class UnavailableApprovalRepository:
+    """Fail closed when a composition has no durable approval authority."""
+
+    async def issue(
+        self,
+        *,
+        principal_id: str,
+        profile_id: str,
+        credential_version: int,
+        payload: Mapping[str, Any],
+        expires_at: datetime,
+    ) -> ApprovalRecord:
+        raise ApprovalRepositoryError("No approval repository is configured.")
+
+    async def reserve(
+        self,
+        token: str,
+        *,
+        principal_id: str,
+        profile_id: str,
+        credential_version: int,
+        payload: Mapping[str, Any],
+    ) -> ApprovalRecord:
+        raise ApprovalRepositoryError("No approval repository is configured.")
+
+
 def utc_now() -> datetime:
     """Keep the expiry clock injectable at the adapter boundary when needed."""
     return datetime.now(UTC)

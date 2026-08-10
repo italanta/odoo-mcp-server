@@ -5,9 +5,8 @@ This server exposes foundational (generic) Odoo tools plus domain-specific tools
 registered from separate modules under ``src.mcp.odoo.tools``.
 
 A single ``OdooClient`` instance is shared via the lifespan context — all domain
-tool modules reuse it, avoiding duplicate connections. Credentials may hold more
-than one Odoo database; the active database is chosen per session (automatically
-when one is configured, via elicitation when several are).
+tool modules reuse it, avoiding duplicate connections. Legacy local credentials
+may hold more than one database; an explicit durable default selects among them.
 
 Prompts (read automatically by the assistant):
 - ``odoo_write_flow``         — Mandatory 3-step create/update flow.
@@ -37,10 +36,10 @@ Writes are off by default and require the ``ODOO_MCP_ENABLE_WRITES`` server
 policy flag plus a durable exact approval. Protocol sessions never grant authority.
 Deletes and outbound email are never permitted.
 
-Database & session tools:
+Database compatibility tools:
 - ``odoo_setup_credentials``      — Add/update credentials for a database.
 - ``odoo_list_databases``         — List stored databases and the default.
-- ``odoo_switch_database``        — Switch the active database for the session.
+- ``odoo_switch_database``        — Persist and activate a legacy local default.
 - ``odoo_enable_session_writes``  — Deprecated compatibility alias; never grants authority.
 - ``odoo_disable_session_writes`` — Deprecated compatibility alias; no session state exists.
 - ``odoo_runtime_info``           — Runtime diagnostics and write status.
@@ -118,7 +117,7 @@ class AppContext:
 
     odoo: OdooClient | None
     auth_error: str | None = None
-    session_db: str | None = None  # db chosen for this session via elicitation or explicit switch
+    session_db: str | None = None  # Transitional local profile coordinate; not write authority.
     principal_provider: PrincipalProvider = field(default_factory=UnavailablePrincipalProvider)
     onboarding_provider: OnboardingProvider = field(default_factory=UnavailableOnboardingProvider)
     approval_repository: ApprovalRepository = field(default_factory=UnavailableApprovalRepository)
@@ -130,8 +129,8 @@ async def app_lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
 
     Never crash on auth failure — store the error on AppContext so every
     tool can return it to Claude, who will relay the setup instruction.
-    If multiple databases are configured, defer connection until the first
-    tool call so we can elicit a choice from the user.
+    If multiple legacy databases are configured, defer connection until the
+    first tool call resolves the durable default.
     """
     client: OdooClient | None = None
     auth_error: str | None = None
@@ -148,7 +147,7 @@ async def app_lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
     elif len(dbs) == 0:
         # No credentials at all — let odoo_setup_credentials handle it.
         auth_error = None
-    # len(dbs) > 1: defer — _require_odoo will elicit the choice.
+    # len(dbs) > 1: defer; _require_odoo resolves only the durable default.
     try:
         yield AppContext(
             odoo=client,
@@ -201,17 +200,17 @@ Writes must also be enabled in the extension configuration; if not, execution fa
 def odoo_database_selection() -> str:
     """How to work with multiple Odoo databases in a session."""
     return """
-# Working with Odoo databases
+# Working with legacy local Odoo databases
 
 This server may hold credentials for more than one Odoo database.
 
-- **Which database am I connected to?** Call `odoo_ping` — the `db` field in the response is the active session database.
+- **Which database am I connected to?** Call `odoo_ping` — the `db` field is the active local default.
 - **What databases are available?** Call `odoo_list_databases` — it returns all stored databases and the file-level default.
-- **Switch databases:** Call `odoo_switch_database` with the target `db`. This reconnects the session and persists the new default.
-- **First call of a session:** If multiple databases are configured and none has been chosen yet, the server asks you (via elicitation) which one to use. Relay the user's choice — do not guess.
+- **Switch databases:** Call `odoo_switch_database` with the target `db`. This reconnects the local process and persists the new default.
+- **First call:** If multiple legacy databases are configured, the server uses the durable local default. Use `odoo_switch_database` to change it explicitly.
 - **Add a new database:** Call `odoo_setup_credentials`. The newly added database becomes the active default.
 
-When the user's request is database-specific and the session db is ambiguous, confirm which database before reading or writing.
+When a request is database-specific and the durable default is ambiguous, require an explicit selection before reading or writing.
 """.strip()
 
 
@@ -232,12 +231,8 @@ If an operation is blocked, explain the constraint to the user rather than retry
 """.strip()
 
 
-class _DbChoice(BaseModel):
-    db: str = Field(..., description="Database name to use for this session")
-
-
 async def _require_odoo(ctx: Context) -> OdooClient | str:
-    """Return the active OdooClient, eliciting a db choice if multiple are configured.
+    """Return the active local Odoo client using only durable explicit selection.
 
     Returns the client, or an error string the tool should return directly.
     """
@@ -254,25 +249,12 @@ async def _require_odoo(ctx: Context) -> OdooClient | str:
     if not dbs:
         return "No Odoo credentials configured. " + setup_advice()
 
-    if len(dbs) == 1:
-        db = dbs[0]
-    else:
-        try:
-            result = await ctx.elicit(
-                f"Multiple Odoo databases are configured: {', '.join(dbs)}. "
-                "Which one should I use for this session?",
-                schema=_DbChoice,
-            )
-        except Exception:
-            return (
-                f"Multiple Odoo databases are configured: {', '.join(dbs)}. "
-                "Use odoo_switch_database to select one."
-            )
-        if result.action != "accept" or result.data is None:
-            return "No database selected. Use odoo_switch_database to pick one."
-        db = result.data.db
-        if db not in dbs:
-            return f"Unknown database '{db}'. Available: {', '.join(dbs)}."
+    db = dbs[0] if len(dbs) == 1 else get_default_db()
+    if db is None or db not in dbs:
+        return (
+            f"Multiple Odoo databases are configured: {', '.join(dbs)}. "
+            "Use odoo_switch_database to set a durable default explicitly."
+        )
 
     try:
         creds = get_odoo_credentials(db)
